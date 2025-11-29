@@ -5,6 +5,17 @@ from . import (
     collection_management as colm,
 )
 
+
+class VLM_PG_viewlayer_target(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(name="ViewLayer Name")
+    selected: bpy.props.BoolProperty(name="Selected", default=False)
+
+
+class VLM_PG_collection_toggle(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(name="Collection Name")
+    enabled: bpy.props.BoolProperty(name="Enabled", default=True)
+    level: bpy.props.IntProperty(name="Depth", default=0)
+
 def _fold(layout, owner, prop_name, title):
     """折りたたみ安全版：プロパティが無い場合でもUIが落ちない"""
     is_open = bool(getattr(owner, prop_name, False))
@@ -145,6 +156,87 @@ class VLM_OT_prepare_output_nodes_plus(bpy.types.Operator):
                     pass
 
 
+class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
+    bl_idname = "vlm.duplicate_viewlayers_popup"
+    bl_label  = "ビューレイヤーを複製"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    viewlayers: bpy.props.CollectionProperty(type=VLM_PG_viewlayer_target)
+    collections: bpy.props.CollectionProperty(type=VLM_PG_collection_toggle)
+
+    def _collect_layer_collections(self, root, level=0):
+        entry = self.collections.add()
+        entry.name = root.collection.name
+        entry.enabled = not bool(root.exclude)
+        entry.level = level
+        for child in root.children:
+            self._collect_layer_collections(child, level + 1)
+
+    def invoke(self, context, event):
+        self.viewlayers.clear(); self.collections.clear()
+        sc = context.scene
+        active_name = context.view_layer.name if context.view_layer else ""
+
+        for vl in sc.view_layers:
+            item = self.viewlayers.add()
+            item.name = vl.name
+            item.selected = (vl.name == active_name)
+
+        if context.view_layer:
+            self._collect_layer_collections(context.view_layer.layer_collection, 0)
+
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="複製するビューレイヤー", icon='RENDERLAYERS')
+        box = layout.box()
+        for item in self.viewlayers:
+            row = box.row(align=True)
+            row.prop(item, "selected", text="")
+            row.label(text=item.name, icon='RENDERLAYERS')
+
+        layout.separator()
+        layout.label(text="複製後にONにするコレクション", icon='OUTLINER_COLLECTION')
+        cbox = layout.box()
+        for coll in self.collections:
+            row = cbox.row(align=True)
+            row.separator(factor=0.4 + 0.2 * coll.level)
+            row.prop(coll, "enabled", text="", toggle=True)
+            row.label(text=coll.name, icon='OUTLINER_COLLECTION')
+
+        info = layout.box()
+        info.label(text="チェック=含める / OFF=除外として複製", icon='INFO')
+
+    def execute(self, context):
+        sc = context.scene
+        targets = [i.name for i in self.viewlayers if i.selected]
+        if not targets:
+            targets = [context.view_layer.name] if context.view_layer else []
+        if not targets:
+            self.report({'WARNING'}, "複製するビューレイヤーを選択してください")
+            return {'CANCELLED'}
+
+        states = {c.name: c.enabled for c in self.collections}
+        created = []
+        for name in targets:
+            src = sc.view_layers.get(name)
+            if not src:
+                continue
+            new_vl = colm.duplicate_view_layer_with_collections(sc, src, collection_states=states)
+            if new_vl:
+                created.append((name, new_vl.name))
+
+        if not created:
+            self.report({'WARNING'}, "複製に失敗しました")
+            return {'CANCELLED'}
+
+        state_txt = ", ".join([f"{k}:{'ON' if v else 'OFF'}" for k, v in states.items()]) or "コレクション設定なし"
+        layer_txt = ", ".join([f"{src}→{dst}" for src, dst in created])
+        self.report({'INFO'}, f"複製完了: {layer_txt} / {state_txt}")
+        return {'FINISHED'}
+
+
 class VLM_PT_panel(bpy.types.Panel):
     bl_label       = "View Layer Manager (Light & Collection)"
     bl_idname      = "VLM_PT_panel"
@@ -181,6 +273,9 @@ class VLM_PT_panel(bpy.types.Panel):
             else:
                 op = row.operator("vlm.set_active_viewlayer", text="", icon='RADIOBUT_OFF', emboss=False)
                 op.layer_name = v.name
+
+        dup_row = layout.row(align=True)
+        dup_row.operator("vlm.duplicate_viewlayers_popup", icon='DUPLICATE')
 
         layout.separator()
 
@@ -468,8 +563,14 @@ def register():
         default=False
     )
 
-    bpy.utils.register_class(VLM_OT_prepare_output_nodes_plus)
-    bpy.utils.register_class(VLM_PT_panel)
+    for cls in (
+        VLM_PG_viewlayer_target,
+        VLM_PG_collection_toggle,
+        VLM_OT_prepare_output_nodes_plus,
+        VLM_OT_duplicate_viewlayers_popup,
+        VLM_PT_panel,
+    ):
+        bpy.utils.register_class(cls)
     
     if not hasattr(bpy.types.Scene, "vlm_ui_show_world"):
         bpy.types.Scene.vlm_ui_show_world = bpy.props.BoolProperty(
@@ -477,8 +578,14 @@ def register():
         )
         
 def unregister():
-    bpy.utils.unregister_class(VLM_PT_panel)
-    bpy.utils.unregister_class(VLM_OT_prepare_output_nodes_plus)
+    for cls in (
+        VLM_PT_panel,
+        VLM_OT_duplicate_viewlayers_popup,
+        VLM_OT_prepare_output_nodes_plus,
+        VLM_PG_collection_toggle,
+        VLM_PG_viewlayer_target,
+    ):
+        bpy.utils.unregister_class(cls)
     if hasattr(bpy.types.Scene, "vlm_enable_ao_multiply"):
         del bpy.types.Scene.vlm_enable_ao_multiply
     if hasattr(bpy.types.Scene, "vlm_ui_show_world"):

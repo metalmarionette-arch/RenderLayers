@@ -109,6 +109,48 @@ def _defer_strong_purge(scene, delay=0.0):
     except Exception:
         pass
 
+
+def _unique_view_layer_name(scene, base):
+    name = base
+    i = 1
+    while name in scene.view_layers:
+        name = f"{base}.{i:03d}"
+        i += 1
+    return name
+
+
+def _apply_collection_states_to_viewlayer(vl, collection_states):
+    def _walk(lc):
+        desired = collection_states.get(lc.collection.name)
+        if desired is not None:
+            lc.exclude = not bool(desired)
+        for child in lc.children:
+            _walk(child)
+    _walk(vl.layer_collection)
+
+
+def duplicate_view_layer_with_collections(scene, source_vl, *, collection_states=None):
+    """アクティブを一時切替えてコピーし、コレクションON/OFFを即適用"""
+    collection_states = collection_states or {}
+    win = bpy.context.window
+    orig_vl = win.view_layer
+    new_vl = None
+    try:
+        win.view_layer = source_vl
+        bpy.ops.scene.view_layer_add(type='COPY')
+        new_vl = win.view_layer
+        new_vl.name = _unique_view_layer_name(scene, f"{source_vl.name}_copy")
+        if collection_states:
+            _apply_collection_states_to_viewlayer(new_vl, collection_states)
+    except Exception:
+        new_vl = None
+    finally:
+        try:
+            win.view_layer = orig_vl
+        except Exception:
+            pass
+    return new_vl
+
 # =========================================================
 # Collection × ViewLayer のマテリアル上書き（2オペ）
 # =========================================================
