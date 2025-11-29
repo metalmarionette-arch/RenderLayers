@@ -129,9 +129,22 @@ def _apply_collection_states_to_viewlayer(vl, collection_states):
     _walk(vl.layer_collection)
 
 
-def duplicate_view_layer_with_collections(scene, source_vl, *, collection_states=None):
-    """アクティブを一時切替えてコピーし、コレクションON/OFFを即適用"""
+def duplicate_view_layer_with_collections(scene, source_vl, *, collection_states=None, desired_name=None, rename_from=None, rename_to=None):
+    """アクティブを一時切替えてコピーし、コレクションON/OFFを即適用。
+
+    desired_name    : 新ビューレイヤー名の指定（空なら自動生成）
+    rename_from/to  : desired_name が無い場合に source_vl.name へ置換適用
+    """
     collection_states = collection_states or {}
+    rename_from = (rename_from or "").strip()
+    rename_to = rename_to or ""
+    base_name = (desired_name or "").strip()
+    if not base_name:
+        if rename_from:
+            replaced = source_vl.name.replace(rename_from, rename_to)
+            base_name = replaced if replaced else source_vl.name
+        else:
+            base_name = f"{source_vl.name}_copy"
     win = bpy.context.window
     orig_vl = win.view_layer
     new_vl = None
@@ -139,7 +152,7 @@ def duplicate_view_layer_with_collections(scene, source_vl, *, collection_states
         win.view_layer = source_vl
         bpy.ops.scene.view_layer_add(type='COPY')
         new_vl = win.view_layer
-        new_vl.name = _unique_view_layer_name(scene, f"{source_vl.name}_copy")
+        new_vl.name = _unique_view_layer_name(scene, base_name)
         if collection_states:
             _apply_collection_states_to_viewlayer(new_vl, collection_states)
     except Exception:

@@ -163,6 +163,8 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
 
     viewlayers: bpy.props.CollectionProperty(type=VLM_PG_viewlayer_target)
     collections: bpy.props.CollectionProperty(type=VLM_PG_collection_toggle)
+    rename_from: bpy.props.StringProperty(name="置換元", description="名前の一部を置換する場合に指定")
+    rename_to: bpy.props.StringProperty(name="置換先", description="置換後の文字列")
 
     def _collect_layer_collections(self, root, level=0):
         entry = self.collections.add()
@@ -197,6 +199,15 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
             row.label(text=item.name, icon='RENDERLAYERS')
 
         layout.separator()
+        layout.label(text="名前置換 (任意)", icon='SORTALPHA')
+        name_box = layout.box()
+        row = name_box.row(align=True)
+        row.prop(self, "rename_from", text="置換元")
+        row.prop(self, "rename_to", text="置換先")
+        hint = name_box.box()
+        hint.label(text="例: glay→bl として複製すると alp_glay_C1 → alp_bl_C1", icon='INFO')
+
+        layout.separator()
         layout.label(text="複製後にONにするコレクション", icon='OUTLINER_COLLECTION')
         cbox = layout.box()
         for coll in self.collections:
@@ -218,12 +229,24 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
             return {'CANCELLED'}
 
         states = {c.name: c.enabled for c in self.collections}
+        rename_from = (self.rename_from or "").strip()
+        rename_to = self.rename_to or ""
         created = []
         for name in targets:
             src = sc.view_layers.get(name)
             if not src:
                 continue
-            new_vl = colm.duplicate_view_layer_with_collections(sc, src, collection_states=states)
+            desired_name = None
+            if rename_from:
+                replaced = name.replace(rename_from, rename_to)
+                desired_name = replaced if replaced else name
+
+            new_vl = colm.duplicate_view_layer_with_collections(
+                sc,
+                src,
+                collection_states=states,
+                desired_name=desired_name,
+            )
             if new_vl:
                 created.append((name, new_vl.name))
 
@@ -233,7 +256,8 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
 
         state_txt = ", ".join([f"{k}:{'ON' if v else 'OFF'}" for k, v in states.items()]) or "コレクション設定なし"
         layer_txt = ", ".join([f"{src}→{dst}" for src, dst in created])
-        self.report({'INFO'}, f"複製完了: {layer_txt} / {state_txt}")
+        rename_txt = "" if not rename_from else f" / 名前置換: '{rename_from}'→'{rename_to}'"
+        self.report({'INFO'}, f"複製完了: {layer_txt} / {state_txt}{rename_txt}")
         return {'FINISHED'}
 
 
