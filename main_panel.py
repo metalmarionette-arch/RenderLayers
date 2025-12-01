@@ -435,7 +435,7 @@ class VLM_PT_panel(bpy.types.Panel):
 
         dup_row = layout.row(align=True)
         dup_row.operator("vlm.duplicate_viewlayers_popup", icon='DUPLICATE')
-        dup_row.operator("vlm.apply_collection_settings_popup", icon='MODIFIER_ON")
+        dup_row.operator("vlm.apply_collection_settings_popup", icon='MODIFIER_ON')
 
         layout.separator()
 
