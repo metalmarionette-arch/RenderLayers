@@ -54,6 +54,12 @@ def register():
     bpy.types.Scene.vlm_ui_show_render_output    = BoolProperty(default=True)
     bpy.types.Scene.vlm_ui_show_sample_override  = BoolProperty(default=False)
 
+    bpy.types.Scene.vlm_skip_existing_frames = BoolProperty(
+        name="Skip Existing Frames",
+        description="既に書き出されたフレームがあればスキップして次のフレームからレンダーを続行する",
+        default=False,
+    )
+
     # --- サンプル強制上書き（Scene） ---
     def _update_force_samples(self, context):
         try:
@@ -115,6 +121,7 @@ def unregister():
         "vlm_ui_show_camera","vlm_ui_show_world","vlm_ui_show_lights","vlm_ui_show_format",
         "vlm_ui_show_frame_range","vlm_ui_show_output_nodes","vlm_ui_show_render_output",
         "vlm_ui_show_sample_override",
+        "vlm_skip_existing_frames",
         "vlm_force_samples_enable","vlm_force_samples_cycles","vlm_force_samples_eevee",
         "vlm_gpu_safe_mode",
         "vlm_vram_watch_enable","vlm_vram_threshold_pct","vlm_vram_warmup_frames",

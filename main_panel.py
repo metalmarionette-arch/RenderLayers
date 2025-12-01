@@ -479,6 +479,7 @@ class VLM_PT_panel(bpy.types.Panel):
 
                 col = layout.column(align=True)
                 col.enabled = (is_top_layer or vrs.frame_enable)
+                col.prop(sc, "vlm_skip_existing_frames", text="既存フレームをスキップ")
                 col.prop(vrs, "frame_start", text="開始フレーム")
                 col.prop(vrs, "frame_end",   text="最終フレーム")
                 col.prop(vrs, "frame_step",  text="フレームステップ")

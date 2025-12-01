@@ -29,6 +29,83 @@ def _resolve_frame_range(scene, vl):
         s, e, st = top_rs.frame_start, top_rs.frame_end, max(1, top_rs.frame_step)
     return int(s), int(e), int(st)
 
+
+def _file_extension_from_format(fmt, render):
+    mapping = {
+        "PNG": ".png",
+        "OPEN_EXR": ".exr",
+        "OPEN_EXR_MULTILAYER": ".exr",
+        "JPEG": ".jpg",
+        "JPEG2000": ".jp2",
+        "TIFF": ".tif",
+        "TARGA": ".tga",
+        "TARGA_RAW": ".tga",
+        "IRIS": ".sgi",
+        "BMP": ".bmp",
+        "CINEON": ".cin",
+        "DPX": ".dpx",
+        "HDR": ".hdr",
+    }
+    ext = mapping.get(getattr(fmt, "file_format", ""))
+    if not ext:
+        ext = getattr(render, "file_extension", "") or ""
+        if ext and not ext.startswith("."):
+            ext = f".{ext}"
+    return ext or ".exr"
+
+
+def _iter_vlm_file_outputs(scene, vl_name):
+    if not scene.use_nodes or not scene.node_tree:
+        return []
+    return [
+        n for n in scene.node_tree.nodes
+        if n.type == 'OUTPUT_FILE'
+        and n.get("vlm_managed")
+        and n.get("vl_name") == vl_name
+        and getattr(n, "file_slots", None)
+    ]
+
+
+def _frame_output_exists(scene, vl_name, frame_number):
+    nodes = _iter_vlm_file_outputs(scene, vl_name)
+    if not nodes:
+        return False
+
+    frame_int = int(frame_number)
+    padding = int(getattr(scene.render, "frame_padding", 4) or 4)
+
+    for node in nodes:
+        slots = getattr(node, "file_slots", None)
+        if not slots:
+            continue
+        slot = slots[0]
+        base_dir = bpy.path.abspath(getattr(node, "base_path", ""))
+        prefix = bpy.path.abspath(os.path.join(base_dir, getattr(slot, "path", "")))
+        directory = os.path.dirname(prefix) or base_dir or ""
+        if not directory or not os.path.isdir(directory):
+            continue
+
+        ext = _file_extension_from_format(node.format, scene.render)
+        filename = bpy.path.ensure_ext(f"{prefix}{frame_int:0{padding}d}", ext)
+
+        if os.path.exists(filename):
+            return True
+
+        base_name = os.path.basename(prefix)
+        try:
+            for fname in os.listdir(directory):
+                if not fname.startswith(base_name):
+                    continue
+                if not fname.lower().endswith(ext.lower()):
+                    continue
+                digits = re.search(r"(\d+)", fname)
+                if digits and int(digits.group(1)) == frame_int:
+                    return True
+        except FileNotFoundError:
+            continue
+
+    return False
+
 def _selected_viewlayers(scene):
     """UI『レンダリングする/しない』チェックを反映して対象VLを選定。
        0件なら vl.use==True、さらに0件なら全VLにフォールバック。"""
@@ -840,6 +917,9 @@ class VLM_OT_render_active_viewlayer(bpy.types.Operator):
         sc  = context.scene
         win = context.window
 
+        skip_existing = bool(getattr(sc, "vlm_skip_existing_frames", False))
+        skipped_frames = 0
+
         orig_vl     = win.view_layer
         orig_engine = sc.render.engine
         orig_frame  = sc.frame_current
@@ -876,6 +956,13 @@ class VLM_OT_render_active_viewlayer(bpy.types.Operator):
 
                 f = start
                 while f <= end:
+                    if skip_existing and _frame_output_exists(sc, vl.name, f):
+                        skipped_frames += 1
+                        done += 1
+                        context.window_manager.progress_update(done)
+                        f += step
+                        continue
+
                     apply_active_viewlayer_overrides(context)
                     light_camera.apply_lights_for_viewlayer(vl)
                     apply_render_override(sc, vl)
@@ -904,7 +991,10 @@ class VLM_OT_render_active_viewlayer(bpy.types.Operator):
             except Exception:
                 pass
 
-        self.report({'INFO'}, "レンダリングが完了しました")
+        if skipped_frames:
+            self.report({'INFO'}, f"レンダリングが完了しました（スキップ: {skipped_frames}フレーム）")
+        else:
+            self.report({'INFO'}, "レンダリングが完了しました")
         return {'FINISHED'}
 
 
@@ -924,6 +1014,9 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
         if not self._vl_list:
             self.report({'ERROR'}, "レンダリング対象がありません")
             return {'CANCELLED'}
+
+        self._skip_existing = bool(getattr(sc, "vlm_skip_existing_frames", False))
+        self._skipped_frames = 0
 
         # 総ステップを“各VLの実際に使うレンジ”で計算
         if self.use_animation:
@@ -963,7 +1056,10 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
         # 全部終わった
         if self._vl_index >= len(self._vl_list):
             wm.progress_end()
-            self.report({'INFO'}, "全レイヤーのレンダリングが完了しました。")
+            if self._skipped_frames:
+                self.report({'INFO'}, f"全レイヤーのレンダリングが完了しました。（スキップ: {self._skipped_frames}フレーム）")
+            else:
+                self.report({'INFO'}, "全レイヤーのレンダリングが完了しました。")
             return {'FINISHED'}
 
         vl = self._vl_list[self._vl_index]
@@ -980,6 +1076,17 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
         if self._need_reset_frame or (self._frame < start or self._frame > end):
             self._frame = start
             self._need_reset_frame = False
+
+        if self.use_animation and self._skip_existing and _frame_output_exists(sc, vl.name, self._frame):
+            self._skipped_frames += 1
+            self._done_steps += 1
+            wm.progress_update(self._done_steps)
+
+            self._frame += step
+            if self._frame > end:
+                self._vl_index += 1
+                self._need_reset_frame = True
+            return {'RUNNING_MODAL'}
 
         # 各種オーバーライド適用
         apply_active_viewlayer_overrides(context)
