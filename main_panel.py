@@ -11,6 +11,24 @@ class VLM_PG_viewlayer_target(bpy.types.PropertyGroup):
     selected: bpy.props.BoolProperty(name="Selected", default=False)
 
 
+STATE_ITEMS = [
+    ('KEEP', "変更なし", "現在の状態を維持"),
+    ('ON',   "ON",     "ON にする"),
+    ('OFF',  "OFF",    "OFF にする"),
+]
+
+
+class VLM_PG_collection_multi_state(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(name="Collection Name")
+    level: bpy.props.IntProperty(name="Depth", default=0)
+
+    content_state: bpy.props.EnumProperty(name="内容", items=STATE_ITEMS, default='KEEP')
+    select_state: bpy.props.EnumProperty(name="選択", items=STATE_ITEMS, default='KEEP')
+    render_state: bpy.props.EnumProperty(name="レンダー", items=STATE_ITEMS, default='KEEP')
+    holdout_state: bpy.props.EnumProperty(name="ホールドアウト", items=STATE_ITEMS, default='KEEP')
+    indirect_state: bpy.props.EnumProperty(name="間接的のみ", items=STATE_ITEMS, default='KEEP')
+
+
 class VLM_PG_collection_toggle(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(name="Collection Name")
     enabled: bpy.props.BoolProperty(name="Enabled", default=True)
@@ -261,6 +279,123 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class VLM_OT_apply_collection_settings_popup(bpy.types.Operator):
+    bl_idname = "vlm.apply_collection_settings_popup"
+    bl_label  = "コレクション設定を一括適用"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    viewlayers: bpy.props.CollectionProperty(type=VLM_PG_viewlayer_target)
+    collection_rules: bpy.props.CollectionProperty(type=VLM_PG_collection_multi_state)
+
+    def _collect_layer_collections(self, lc, level=0):
+        if lc.collection.name in {"Scene Collection", "シーンコレクション"}:
+            for child in lc.children:
+                self._collect_layer_collections(child, level)
+            return
+
+        item = self.collection_rules.add()
+        item.name = lc.collection.name
+        item.level = level
+
+        for child in lc.children:
+            self._collect_layer_collections(child, level + 1)
+
+    def invoke(self, context, event):
+        self.viewlayers.clear(); self.collection_rules.clear()
+
+        sc = context.scene
+        active_name = context.view_layer.name if context.view_layer else ""
+        for vl in sc.view_layers:
+            entry = self.viewlayers.add()
+            entry.name = vl.name
+            entry.selected = (vl.name == active_name)
+
+        if context.view_layer:
+            self._collect_layer_collections(context.view_layer.layer_collection, 0)
+
+        return context.window_manager.invoke_props_dialog(self, width=560)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="適用対象のビューレイヤー", icon='RENDERLAYERS')
+        lbox = layout.box()
+        for item in self.viewlayers:
+            row = lbox.row(align=True)
+            row.prop(item, "selected", text="")
+            row.label(text=item.name, icon='RENDERLAYERS')
+
+        layout.separator()
+        layout.label(text="コレクション設定", icon='OUTLINER_COLLECTION')
+        cbox = layout.box()
+
+        head = cbox.row(align=True)
+        head.separator(factor=0.6)
+        head.label(text="コレクション")
+        for title in ("内容", "選択", "レンダー", "ホールドアウト", "間接的のみ"):
+            col = head.column(align=True)
+            col.label(text=title)
+
+        for rule in self.collection_rules:
+            row = cbox.row(align=True)
+            row.separator(factor=0.4 + 0.2 * rule.level)
+            row.label(text=rule.name, icon='OUTLINER_COLLECTION')
+
+            row.prop(rule, "content_state", expand=True, text="")
+            row.prop(rule, "select_state", expand=True, text="")
+            row.prop(rule, "render_state", expand=True, text="")
+            row.prop(rule, "holdout_state", expand=True, text="")
+            row.prop(rule, "indirect_state", expand=True, text="")
+
+        hint = layout.box()
+        hint.label(text="ON/OFF を選んだ項目のみ変更します。変更なしは現状維持。", icon='INFO')
+
+    def execute(self, context):
+        sc = context.scene
+        targets = [i.name for i in self.viewlayers if i.selected]
+        if not targets and context.view_layer:
+            targets = [context.view_layer.name]
+        if not targets:
+            self.report({'WARNING'}, "ビューレイヤーを選択してください")
+            return {'CANCELLED'}
+
+        def _state(val, on_val=True, off_val=False):
+            if val == 'KEEP':
+                return None
+            return on_val if val == 'ON' else off_val
+
+        settings = {}
+        for rule in self.collection_rules:
+            conf = {
+                "include": _state(rule.content_state, True, False),
+                "select": _state(rule.select_state, True, False),
+                "render": _state(rule.render_state, True, False),
+                "holdout": _state(rule.holdout_state, True, False),
+                "indirect_only": _state(rule.indirect_state, True, False),
+            }
+            if any(v is not None for v in conf.values()):
+                settings[rule.name] = conf
+
+        if not settings:
+            self.report({'WARNING'}, "変更内容が選択されていません")
+            return {'CANCELLED'}
+
+        applied_layers, touched_cols = colm.apply_collection_settings(sc, targets, settings)
+
+        try:
+            context.view_layer.update()
+        except Exception:
+            pass
+
+        if not applied_layers:
+            self.report({'WARNING'}, "適用できるコレクションが見つかりませんでした")
+            return {'CANCELLED'}
+
+        layer_txt = ", ".join([f"{nm}({len(cols)}件)" for nm, cols in applied_layers])
+        cols_txt = ", ".join(touched_cols) if touched_cols else "なし"
+        self.report({'INFO'}, f"設定を適用: {layer_txt} / 変更コレクション: {cols_txt}")
+        return {'FINISHED'}
+
+
 class VLM_PT_panel(bpy.types.Panel):
     bl_label       = "View Layer Manager (Light & Collection)"
     bl_idname      = "VLM_PT_panel"
@@ -300,6 +435,7 @@ class VLM_PT_panel(bpy.types.Panel):
 
         dup_row = layout.row(align=True)
         dup_row.operator("vlm.duplicate_viewlayers_popup", icon='DUPLICATE')
+        dup_row.operator("vlm.apply_collection_settings_popup", icon='MODIFIER_ON")
 
         layout.separator()
 
@@ -590,9 +726,11 @@ def register():
 
     for cls in (
         VLM_PG_viewlayer_target,
+        VLM_PG_collection_multi_state,
         VLM_PG_collection_toggle,
         VLM_OT_prepare_output_nodes_plus,
         VLM_OT_duplicate_viewlayers_popup,
+        VLM_OT_apply_collection_settings_popup,
         VLM_PT_panel,
     ):
         bpy.utils.register_class(cls)
@@ -605,9 +743,11 @@ def register():
 def unregister():
     for cls in (
         VLM_PT_panel,
+        VLM_OT_apply_collection_settings_popup,
         VLM_OT_duplicate_viewlayers_popup,
         VLM_OT_prepare_output_nodes_plus,
         VLM_PG_collection_toggle,
+        VLM_PG_collection_multi_state,
         VLM_PG_viewlayer_target,
     ):
         bpy.utils.unregister_class(cls)

@@ -3,7 +3,7 @@
 bl_info = {
     "name":        "View Layer Manager (Light & Collection)",
     "author":      "Your Name",
-    "version":     (1, 6, 1),
+    "version":     (1, 6, 2),
     "blender":     (4, 0, 0),
     "location":    "3D View > N Panel > RenderLayers",
     "description": "Manage view layers, collections, light/camera, render overrides, and safe rendering options.",

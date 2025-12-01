@@ -206,6 +206,75 @@ def _apply_collection_states_to_viewlayer(vl, collection_states):
     _walk(vl.layer_collection)
 
 
+def _find_layer_collection_by_name(lc_root, coll_name):
+    if lc_root.collection.name == coll_name:
+        return lc_root
+    for child in lc_root.children:
+        res = _find_layer_collection_by_name(child, coll_name)
+        if res:
+            return res
+    return None
+
+
+def apply_collection_settings(scene, target_layer_names, collection_settings):
+    """指定された複数ビューレイヤーに対し、コレクション設定を一括適用する。
+
+    collection_settings: {collection_name: {"include": bool|None, "select": bool|None,
+                                            "render": bool|None, "holdout": bool|None,
+                                            "indirect_only": bool|None}}
+    """
+    applied_layers = []
+    touched_collections = set()
+
+    for layer_name in target_layer_names:
+        vl = scene.view_layers.get(layer_name)
+        if vl is None:
+            continue
+
+        changed_here = []
+        for coll_name, conf in collection_settings.items():
+            lc = _find_layer_collection_by_name(vl.layer_collection, coll_name)
+            if lc is None:
+                continue
+
+            coll = lc.collection
+            changed = False
+
+            include_state = conf.get("include")
+            if include_state is not None:
+                lc.exclude = not bool(include_state)
+                changed = True
+
+            sel_state = conf.get("select")
+            if sel_state is not None:
+                coll.hide_select = not bool(sel_state)
+                changed = True
+
+            render_state = conf.get("render")
+            if render_state is not None:
+                coll.hide_render = not bool(render_state)
+                changed = True
+
+            holdout_state = conf.get("holdout")
+            if holdout_state is not None:
+                lc.holdout = bool(holdout_state)
+                changed = True
+
+            indirect_state = conf.get("indirect_only")
+            if indirect_state is not None:
+                lc.indirect_only = bool(indirect_state)
+                changed = True
+
+            if changed:
+                changed_here.append(coll_name)
+                touched_collections.add(coll_name)
+
+        if changed_here:
+            applied_layers.append((vl.name, changed_here))
+
+    return applied_layers, sorted(touched_collections)
+
+
 def duplicate_view_layer_with_collections(scene, source_vl, *, collection_states=None, desired_name=None, rename_from=None, rename_to=None):
     """アクティブを一時切替えてコピーし、コレクションON/OFFを即適用。
 
