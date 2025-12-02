@@ -29,6 +29,83 @@ def _resolve_frame_range(scene, vl):
         s, e, st = top_rs.frame_start, top_rs.frame_end, max(1, top_rs.frame_step)
     return int(s), int(e), int(st)
 
+
+def _file_extension_from_format(fmt, render):
+    mapping = {
+        "PNG": ".png",
+        "OPEN_EXR": ".exr",
+        "OPEN_EXR_MULTILAYER": ".exr",
+        "JPEG": ".jpg",
+        "JPEG2000": ".jp2",
+        "TIFF": ".tif",
+        "TARGA": ".tga",
+        "TARGA_RAW": ".tga",
+        "IRIS": ".sgi",
+        "BMP": ".bmp",
+        "CINEON": ".cin",
+        "DPX": ".dpx",
+        "HDR": ".hdr",
+    }
+    ext = mapping.get(getattr(fmt, "file_format", ""))
+    if not ext:
+        ext = getattr(render, "file_extension", "") or ""
+        if ext and not ext.startswith("."):
+            ext = f".{ext}"
+    return ext or ".exr"
+
+
+def _iter_vlm_file_outputs(scene, vl_name):
+    if not scene.use_nodes or not scene.node_tree:
+        return []
+    return [
+        n for n in scene.node_tree.nodes
+        if n.type == 'OUTPUT_FILE'
+        and n.get("vlm_managed")
+        and n.get("vl_name") == vl_name
+        and getattr(n, "file_slots", None)
+    ]
+
+
+def _frame_output_exists(scene, vl_name, frame_number):
+    nodes = _iter_vlm_file_outputs(scene, vl_name)
+    if not nodes:
+        return False
+
+    frame_int = int(frame_number)
+    padding = int(getattr(scene.render, "frame_padding", 4) or 4)
+
+    for node in nodes:
+        slots = getattr(node, "file_slots", None)
+        if not slots:
+            continue
+        slot = slots[0]
+        base_dir = bpy.path.abspath(getattr(node, "base_path", ""))
+        prefix = bpy.path.abspath(os.path.join(base_dir, getattr(slot, "path", "")))
+        directory = os.path.dirname(prefix) or base_dir or ""
+        if not directory or not os.path.isdir(directory):
+            continue
+
+        ext = _file_extension_from_format(node.format, scene.render)
+        filename = bpy.path.ensure_ext(f"{prefix}{frame_int:0{padding}d}", ext)
+
+        if os.path.exists(filename):
+            return True
+
+        base_name = os.path.basename(prefix)
+        try:
+            for fname in os.listdir(directory):
+                if not fname.startswith(base_name):
+                    continue
+                if not fname.lower().endswith(ext.lower()):
+                    continue
+                digits = re.search(r"(\d+)", fname)
+                if digits and int(digits.group(1)) == frame_int:
+                    return True
+        except FileNotFoundError:
+            continue
+
+    return False
+
 def _selected_viewlayers(scene):
     """UI『レンダリングする/しない』チェックを反映して対象VLを選定。
        0件なら vl.use==True、さらに0件なら全VLにフォールバック。"""
@@ -108,6 +185,130 @@ def _defer_strong_purge(scene, delay=0.0):
         bpy.app.timers.register(_run, first_interval=float(delay))
     except Exception:
         pass
+
+
+def _unique_view_layer_name(scene, base):
+    name = base
+    i = 1
+    while name in scene.view_layers:
+        name = f"{base}.{i:03d}"
+        i += 1
+    return name
+
+
+def _apply_collection_states_to_viewlayer(vl, collection_states):
+    def _walk(lc):
+        desired = collection_states.get(lc.collection.name)
+        if desired is not None:
+            lc.exclude = not bool(desired)
+        for child in lc.children:
+            _walk(child)
+    _walk(vl.layer_collection)
+
+
+def _find_layer_collection_by_name(lc_root, coll_name):
+    if lc_root.collection.name == coll_name:
+        return lc_root
+    for child in lc_root.children:
+        res = _find_layer_collection_by_name(child, coll_name)
+        if res:
+            return res
+    return None
+
+
+def apply_collection_settings(scene, target_layer_names, collection_settings):
+    """指定された複数ビューレイヤーに対し、コレクション設定を一括適用する。
+
+    collection_settings: {collection_name: {"include": bool|None, "select": bool|None,
+                                            "render": bool|None, "holdout": bool|None,
+                                            "indirect_only": bool|None}}
+    """
+    applied_layers = []
+    touched_collections = set()
+
+    for layer_name in target_layer_names:
+        vl = scene.view_layers.get(layer_name)
+        if vl is None:
+            continue
+
+        changed_here = []
+        for coll_name, conf in collection_settings.items():
+            lc = _find_layer_collection_by_name(vl.layer_collection, coll_name)
+            if lc is None:
+                continue
+
+            coll = lc.collection
+            changed = False
+
+            include_state = conf.get("include")
+            if include_state is not None:
+                lc.exclude = not bool(include_state)
+                changed = True
+
+            sel_state = conf.get("select")
+            if sel_state is not None:
+                coll.hide_select = not bool(sel_state)
+                changed = True
+
+            render_state = conf.get("render")
+            if render_state is not None:
+                coll.hide_render = not bool(render_state)
+                changed = True
+
+            holdout_state = conf.get("holdout")
+            if holdout_state is not None:
+                lc.holdout = bool(holdout_state)
+                changed = True
+
+            indirect_state = conf.get("indirect_only")
+            if indirect_state is not None:
+                lc.indirect_only = bool(indirect_state)
+                changed = True
+
+            if changed:
+                changed_here.append(coll_name)
+                touched_collections.add(coll_name)
+
+        if changed_here:
+            applied_layers.append((vl.name, changed_here))
+
+    return applied_layers, sorted(touched_collections)
+
+
+def duplicate_view_layer_with_collections(scene, source_vl, *, collection_states=None, desired_name=None, rename_from=None, rename_to=None):
+    """アクティブを一時切替えてコピーし、コレクションON/OFFを即適用。
+
+    desired_name    : 新ビューレイヤー名の指定（空なら自動生成）
+    rename_from/to  : desired_name が無い場合に source_vl.name へ置換適用
+    """
+    collection_states = collection_states or {}
+    rename_from = (rename_from or "").strip()
+    rename_to = rename_to or ""
+    base_name = (desired_name or "").strip()
+    if not base_name:
+        if rename_from:
+            replaced = source_vl.name.replace(rename_from, rename_to)
+            base_name = replaced if replaced else source_vl.name
+        else:
+            base_name = f"{source_vl.name}_copy"
+    win = bpy.context.window
+    orig_vl = win.view_layer
+    new_vl = None
+    try:
+        win.view_layer = source_vl
+        bpy.ops.scene.view_layer_add(type='COPY')
+        new_vl = win.view_layer
+        new_vl.name = _unique_view_layer_name(scene, base_name)
+        if collection_states:
+            _apply_collection_states_to_viewlayer(new_vl, collection_states)
+    except Exception:
+        new_vl = None
+    finally:
+        try:
+            win.view_layer = orig_vl
+        except Exception:
+            pass
+    return new_vl
 
 # =========================================================
 # Collection × ViewLayer のマテリアル上書き（2オペ）
@@ -785,6 +986,9 @@ class VLM_OT_render_active_viewlayer(bpy.types.Operator):
         sc  = context.scene
         win = context.window
 
+        skip_existing = bool(getattr(sc, "vlm_skip_existing_frames", False))
+        skipped_frames = 0
+
         orig_vl     = win.view_layer
         orig_engine = sc.render.engine
         orig_frame  = sc.frame_current
@@ -821,6 +1025,13 @@ class VLM_OT_render_active_viewlayer(bpy.types.Operator):
 
                 f = start
                 while f <= end:
+                    if skip_existing and _frame_output_exists(sc, vl.name, f):
+                        skipped_frames += 1
+                        done += 1
+                        context.window_manager.progress_update(done)
+                        f += step
+                        continue
+
                     apply_active_viewlayer_overrides(context)
                     light_camera.apply_lights_for_viewlayer(vl)
                     apply_render_override(sc, vl)
@@ -849,7 +1060,10 @@ class VLM_OT_render_active_viewlayer(bpy.types.Operator):
             except Exception:
                 pass
 
-        self.report({'INFO'}, "レンダリングが完了しました")
+        if skipped_frames:
+            self.report({'INFO'}, f"レンダリングが完了しました（スキップ: {skipped_frames}フレーム）")
+        else:
+            self.report({'INFO'}, "レンダリングが完了しました")
         return {'FINISHED'}
 
 
@@ -869,6 +1083,9 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
         if not self._vl_list:
             self.report({'ERROR'}, "レンダリング対象がありません")
             return {'CANCELLED'}
+
+        self._skip_existing = bool(getattr(sc, "vlm_skip_existing_frames", False))
+        self._skipped_frames = 0
 
         # 総ステップを“各VLの実際に使うレンジ”で計算
         if self.use_animation:
@@ -908,7 +1125,10 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
         # 全部終わった
         if self._vl_index >= len(self._vl_list):
             wm.progress_end()
-            self.report({'INFO'}, "全レイヤーのレンダリングが完了しました。")
+            if self._skipped_frames:
+                self.report({'INFO'}, f"全レイヤーのレンダリングが完了しました。（スキップ: {self._skipped_frames}フレーム）")
+            else:
+                self.report({'INFO'}, "全レイヤーのレンダリングが完了しました。")
             return {'FINISHED'}
 
         vl = self._vl_list[self._vl_index]
@@ -925,6 +1145,17 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
         if self._need_reset_frame or (self._frame < start or self._frame > end):
             self._frame = start
             self._need_reset_frame = False
+
+        if self.use_animation and self._skip_existing and _frame_output_exists(sc, vl.name, self._frame):
+            self._skipped_frames += 1
+            self._done_steps += 1
+            wm.progress_update(self._done_steps)
+
+            self._frame += step
+            if self._frame > end:
+                self._vl_index += 1
+                self._need_reset_frame = True
+            return {'RUNNING_MODAL'}
 
         # 各種オーバーライド適用
         apply_active_viewlayer_overrides(context)
