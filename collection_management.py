@@ -1006,6 +1006,15 @@ def _start_render_progress_window(context, title: str, total_steps: int):
     st.cancel_requested = False
 
     if not st.window_running:
+        # まず即時にポップアップを出す。コンテキスト不備などで失敗した場合のみ
+        # タイマー経由でリトライし、少しでも早くウィンドウを出す。
+        try:
+            bpy.ops.vlm.render_progress_window('INVOKE_DEFAULT')
+            st.window_running = True
+            return
+        except Exception:
+            st.window_running = False
+
         def _invoke():
             try:
                 bpy.ops.vlm.render_progress_window('INVOKE_DEFAULT')
@@ -1014,7 +1023,7 @@ def _start_render_progress_window(context, title: str, total_steps: int):
             return None
 
         try:
-            bpy.app.timers.register(_invoke, first_interval=0.0)
+            bpy.app.timers.register(_invoke, first_interval=0.01)
         except Exception:
             # ウィンドウが出せない環境でもレンダリングは続行する
             st.window_running = False
@@ -1033,6 +1042,7 @@ def _finish_render_progress():
     st.running = False
     st.finished = True
     st.cancel_requested = False
+    st.window_running = False
 
 
 def _request_render_cancel():
