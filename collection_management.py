@@ -973,6 +973,137 @@ class VLM_OT_prepare_output_nodes(bpy.types.Operator):
         return {'FINISHED'}
 
 # =========================================================
+# レンダリング進捗ウィンドウ（キャンセル可）
+# =========================================================
+
+
+class _RenderProgressState:
+    def __init__(self):
+        self.window_running = False
+        self.reset()
+
+    def reset(self):
+        self.title = ""
+        self.message = ""
+        self.total = 0
+        self.done = 0
+        self.running = False
+        self.finished = False
+        self.cancel_requested = False
+
+
+_progress_state = _RenderProgressState()
+
+
+def _start_render_progress_window(context, title: str, total_steps: int):
+    st = _progress_state
+    st.title = title or "レンダリング中"
+    st.total = max(int(total_steps), 0)
+    st.done = 0
+    st.message = ""
+    st.running = True
+    st.finished = False
+    st.cancel_requested = False
+
+    if not st.window_running:
+        try:
+            bpy.ops.vlm.render_progress_window('INVOKE_DEFAULT')
+        except Exception:
+            # ウィンドウが出せない環境でもレンダリングは続行する
+            st.window_running = False
+
+
+def _update_render_progress(done: int = None, message: str = None):
+    st = _progress_state
+    if done is not None:
+        st.done = int(done)
+    if message is not None:
+        st.message = message
+
+
+def _finish_render_progress():
+    st = _progress_state
+    st.running = False
+    st.finished = True
+    st.cancel_requested = False
+
+
+def _request_render_cancel():
+    st = _progress_state
+    st.cancel_requested = True
+
+
+def _render_cancel_requested():
+    return bool(_progress_state.cancel_requested)
+
+
+class VLM_OT_render_progress_cancel(bpy.types.Operator):
+    bl_idname = "vlm.render_progress_cancel"
+    bl_label = "レンダリングを中止"
+    bl_description = "進行中のレンダリングをキャンセルします"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        _request_render_cancel()
+        try:
+            bpy.ops.render.cancel()
+        except Exception:
+            # 進行中でない場合などは無視
+            pass
+        return {'FINISHED'}
+
+
+class VLM_OT_render_progress_window(bpy.types.Operator):
+    bl_idname = "vlm.render_progress_window"
+    bl_label = "レンダリング中"
+    bl_options = {'INTERNAL'}
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        self._timer = wm.event_timer_add(0.25, window=context.window)
+        _progress_state.window_running = True
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        wm = context.window_manager
+        st = _progress_state
+
+        if event.type == 'ESC':
+            _request_render_cancel()
+            try:
+                bpy.ops.render.cancel()
+            except Exception:
+                pass
+            return {'RUNNING_MODAL'}
+
+        if st.finished or not st.running:
+            wm.event_timer_remove(self._timer)
+            st.window_running = False
+            st.reset()
+            return {'FINISHED'}
+
+        if event.type == 'TIMER':
+            return {'RUNNING_MODAL'}
+
+        return {'PASS_THROUGH'}
+
+    def draw(self, context):
+        st = _progress_state
+        layout = self.layout
+        layout.label(text=st.title or self.bl_label, icon='RENDER_STILL')
+
+        percent = 0.0
+        if st.total > 0:
+            percent = (st.done / st.total) * 100.0
+        layout.label(text=f"進捗: {st.done}/{st.total} ({percent:.1f}%)")
+        if st.message:
+            layout.label(text=st.message)
+
+        layout.separator()
+        layout.operator("vlm.render_progress_cancel", text="レンダリングを中止", icon='CANCEL')
+
+# =========================================================
 # （参考）レンダー関連：アクティブ／全レイヤー
 # =========================================================
 class VLM_OT_render_active_viewlayer(bpy.types.Operator):
@@ -1105,13 +1236,15 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
 
         self._done_steps = 0
         wm.progress_begin(0, self._total_steps)
+        _start_render_progress_window(context, "全レイヤーをレンダリング", self._total_steps)
         self._timer = wm.event_timer_add(0.01, window=context.window)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
-        if event.type == 'ESC':
+        if event.type == 'ESC' or _render_cancel_requested():
             context.window_manager.progress_end()
+            _finish_render_progress()
             self.report({'WARNING'}, "キャンセルしました")
             return {'CANCELLED'}
 
@@ -1125,6 +1258,7 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
         # 全部終わった
         if self._vl_index >= len(self._vl_list):
             wm.progress_end()
+            _finish_render_progress()
             if self._skipped_frames:
                 self.report({'INFO'}, f"全レイヤーのレンダリングが完了しました。（スキップ: {self._skipped_frames}フレーム）")
             else:
@@ -1132,6 +1266,7 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
             return {'FINISHED'}
 
         vl = self._vl_list[self._vl_index]
+        _update_render_progress(self._done_steps, message=f"{vl.name} を処理中")
 
         # このVLだけ有効＆アクティブ
         for v in sc.view_layers:
@@ -1172,6 +1307,7 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
         # 進捗
         self._done_steps += 1
         wm.progress_update(self._done_steps)
+        _update_render_progress(self._done_steps, message=f"{vl.name} - フレーム {self._frame}")
 
         if not self.use_animation:
             # 静止画：次のVLへ。次VLでstartにリセットする
@@ -1193,6 +1329,8 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
 classes = (
     COLM_OT_set_collection_override,
     COLM_OT_clear_collection_override,
+    VLM_OT_render_progress_cancel,
+    VLM_OT_render_progress_window,
     VLM_OT_prepare_output_nodes,
     VLM_OT_render_active_viewlayer,
     VLM_OT_render_all_viewlayers,
