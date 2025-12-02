@@ -1063,7 +1063,7 @@ class VLM_OT_render_progress_window(bpy.types.Operator):
         self._timer = wm.event_timer_add(0.25, window=context.window)
         _progress_state.window_running = True
         context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'}
+        return wm.invoke_popup(self, width=360)
 
     def modal(self, context, event):
         wm = context.window_manager
@@ -1084,6 +1084,8 @@ class VLM_OT_render_progress_window(bpy.types.Operator):
             return {'FINISHED'}
 
         if event.type == 'TIMER':
+            for area in context.window.screen.areas:
+                area.tag_redraw()
             return {'RUNNING_MODAL'}
 
         return {'PASS_THROUGH'}
