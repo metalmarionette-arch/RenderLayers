@@ -1006,8 +1006,15 @@ def _start_render_progress_window(context, title: str, total_steps: int):
     st.cancel_requested = False
 
     if not st.window_running:
+        def _invoke():
+            try:
+                bpy.ops.vlm.render_progress_window('INVOKE_DEFAULT')
+            except Exception:
+                st.window_running = False
+            return None
+
         try:
-            bpy.ops.vlm.render_progress_window('INVOKE_DEFAULT')
+            bpy.app.timers.register(_invoke, first_interval=0.0)
         except Exception:
             # ウィンドウが出せない環境でもレンダリングは続行する
             st.window_running = False
