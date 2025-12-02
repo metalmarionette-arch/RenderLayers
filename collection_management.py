@@ -995,6 +995,58 @@ class _RenderProgressState:
 _progress_state = _RenderProgressState()
 
 
+def _invoke_progress_popup(context):
+    """コンテキストの不足でクラッシュしないように安全にポップアップを開く"""
+    st = _progress_state
+
+    window = getattr(context, "window", None)
+    area = getattr(context, "area", None)
+    region = getattr(context, "region", None)
+
+    if not window or not area:
+        # 現在のコンテキストにウィンドウ/エリアがない場合は適当なものを拾う
+        wm = bpy.context.window_manager
+        for win in wm.windows:
+            if not win.screen:
+                continue
+            if not area:
+                for a in win.screen.areas:
+                    area = a
+                    break
+            if area:
+                window = win
+                break
+
+    if not window or not area:
+        return False
+
+    if not region:
+        for reg in area.regions:
+            if reg.type == 'WINDOW':
+                region = reg
+                break
+
+    override = bpy.context.copy()
+    override.update({
+        "window": window,
+        "screen": window.screen,
+        "area": area,
+    })
+    if region:
+        override["region"] = region
+
+    try:
+        with bpy.context.temp_override(**override):
+            res = bpy.ops.vlm.render_progress_window('INVOKE_DEFAULT')
+        if res != {'CANCELLED'}:
+            st.window_running = True
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
 def _start_render_progress_window(context, title: str, total_steps: int):
     st = _progress_state
     st.title = title or "レンダリング中"
@@ -1008,22 +1060,17 @@ def _start_render_progress_window(context, title: str, total_steps: int):
     if not st.window_running:
         # まず即時にポップアップを出す。コンテキスト不備などで失敗した場合のみ
         # タイマー経由でリトライし、少しでも早くウィンドウを出す。
-        try:
-            bpy.ops.vlm.render_progress_window('INVOKE_DEFAULT')
-            st.window_running = True
+        if _invoke_progress_popup(context):
             return
-        except Exception:
-            st.window_running = False
 
         def _invoke():
-            try:
-                bpy.ops.vlm.render_progress_window('INVOKE_DEFAULT')
-            except Exception:
-                st.window_running = False
+            if not st.running or st.finished:
+                return None
+            _invoke_progress_popup(bpy.context)
             return None
 
         try:
-            bpy.app.timers.register(_invoke, first_interval=0.01)
+            bpy.app.timers.register(_invoke, first_interval=0.05)
         except Exception:
             # ウィンドウが出せない環境でもレンダリングは続行する
             st.window_running = False
