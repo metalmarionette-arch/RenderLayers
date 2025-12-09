@@ -33,7 +33,6 @@ class VLM_PG_collection_toggle(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(name="Collection Name")
     enabled: bpy.props.BoolProperty(name="Enabled", default=True)
     level: bpy.props.IntProperty(name="Depth", default=0)
-    tree_prefix: bpy.props.StringProperty(name="Tree Prefix", default="")
 
 def _fold(layout, owner, prop_name, title):
     """折りたたみ安全版：プロパティが無い場合でもUIが落ちない"""
@@ -184,32 +183,14 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
     collections: bpy.props.CollectionProperty(type=VLM_PG_collection_toggle)
     rename_from: bpy.props.StringProperty(name="置換元", description="名前の一部を置換する場合に指定")
     rename_to: bpy.props.StringProperty(name="置換先", description="置換後の文字列")
-    name_prefix: bpy.props.StringProperty(name="プレフィックス", description="名前の頭に付ける文字列")
-    name_suffix: bpy.props.StringProperty(name="サフィックス", description="名前の末尾に付ける文字列")
-    custom_name: bpy.props.StringProperty(name="指定名", description="ここに入力するとこの名前を元に複製します")
 
-    @staticmethod
-    def _make_tree_prefix(branch_state):
-        if not branch_state:
-            return ""
-
-        parts = []
-        for is_last in branch_state[:-1]:
-            parts.append("    " if is_last else "│   ")
-        parts.append("└─ " if branch_state[-1] else "├─ ")
-        return "".join(parts)
-
-    def _collect_layer_collections(self, root, level=0, branch_state=()):
+    def _collect_layer_collections(self, root, level=0):
         entry = self.collections.add()
         entry.name = root.collection.name
         entry.enabled = not bool(root.exclude)
         entry.level = level
-        entry.tree_prefix = self._make_tree_prefix(branch_state)
-
-        children = list(root.children)
-        for idx, child in enumerate(children):
-            is_last = (idx == len(children) - 1)
-            self._collect_layer_collections(child, level + 1, (*branch_state, is_last))
+        for child in root.children:
+            self._collect_layer_collections(child, level + 1)
 
     def invoke(self, context, event):
         self.viewlayers.clear(); self.collections.clear()
@@ -236,18 +217,11 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
             row.label(text=item.name, icon='RENDERLAYERS')
 
         layout.separator()
-        layout.label(text="名前設定 (任意)", icon='SORTALPHA')
+        layout.label(text="名前置換 (任意)", icon='SORTALPHA')
         name_box = layout.box()
-        name_box.prop(self, "custom_name", text="指定名")
-
         row = name_box.row(align=True)
         row.prop(self, "rename_from", text="置換元")
         row.prop(self, "rename_to", text="置換先")
-
-        row = name_box.row(align=True)
-        row.prop(self, "name_prefix", text="プレフィックス")
-        row.prop(self, "name_suffix", text="サフィックス")
-
         hint = name_box.box()
         hint.label(text="例: glay→bl として複製すると alp_glay_C1 → alp_bl_C1", icon='INFO')
 
@@ -256,7 +230,7 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
         cbox = layout.box()
         for coll in self.collections:
             row = cbox.row(align=True)
-            row.label(text=coll.tree_prefix, icon='BLANK1')
+            row.separator(factor=0.4 + 0.4 * coll.level)
             row.prop(coll, "enabled", text="", toggle=True)
             row.label(text=coll.name, icon='OUTLINER_COLLECTION')
 
@@ -275,25 +249,21 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
         states = {c.name: c.enabled for c in self.collections}
         rename_from = (self.rename_from or "").strip()
         rename_to = self.rename_to or ""
-        name_prefix = self.name_prefix or ""
-        name_suffix = self.name_suffix or ""
-        custom_name = (self.custom_name or "").strip()
         created = []
         for name in targets:
             src = sc.view_layers.get(name)
             if not src:
                 continue
-            base = custom_name if custom_name else name
-            if rename_from and not custom_name:
-                replaced = base.replace(rename_from, rename_to)
-                base = replaced if replaced else base
-            base = f"{name_prefix}{base}{name_suffix}"
+            desired_name = None
+            if rename_from:
+                replaced = name.replace(rename_from, rename_to)
+                desired_name = replaced if replaced else name
 
             new_vl = colm.duplicate_view_layer_with_collections(
                 sc,
                 src,
                 collection_states=states,
-                desired_name=base,
+                desired_name=desired_name,
             )
             if new_vl:
                 created.append((name, new_vl.name))
