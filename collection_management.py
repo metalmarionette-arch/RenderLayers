@@ -459,6 +459,72 @@ def _get_free_file_output_input(fo: bpy.types.NodeSocket):
         return fo.inputs[0]
 
 
+def _sanitize_name_for_path(name: str) -> str:
+    import re
+    return re.sub(r'[^0-9A-Za-z_\-]', '_', name or "")
+
+
+def _configure_output_node_for_pass(node: bpy.types.Node, pass_name: str, vl_name: str,
+                                    blend_name: str, base_fp: str, img_set, slot_index: int = 0):
+    """既存の File Output ノードを現在の設定に同期し、VLM管理対象としてタグ付けする"""
+    node["vlm_managed"] = True
+    node["vl_name"] = vl_name
+    node["pass_name"] = pass_name
+    node["vlm_slot_index"] = int(slot_index)
+
+    node.format.file_format = img_set.file_format
+    node.format.color_mode  = img_set.color_mode
+    node.format.color_depth = img_set.color_depth
+    if hasattr(img_set, "compression"):
+        node.format.compression = img_set.compression
+    if hasattr(img_set, "exr_codec"):
+        node.format.exr_codec   = img_set.exr_codec
+
+    node.base_path = os.path.join(base_fp,
+                                  _sanitize_name_for_path(blend_name),
+                                  _sanitize_name_for_path(vl_name),
+                                  _sanitize_name_for_path(pass_name)) + os.sep
+
+    # スロット数を入力数に合わせて確保
+    while len(node.file_slots) <= slot_index:
+        node.file_slots.new(pass_name if slot_index == 0 else f"{pass_name}_{slot_index}")
+
+    node.file_slots[slot_index].path = f"{_sanitize_name_for_path(blend_name)}_{_sanitize_name_for_path(vl_name)}_{_sanitize_name_for_path(pass_name)}_"
+
+
+def _find_connected_file_outputs_from_socket(sock: bpy.types.NodeSocket):
+    """Render Layers出力からたどれる File Output ノードを返す（間に任意ノード可）。"""
+    if sock is None:
+        return []
+
+    outputs = []
+    queue = [sock]
+    visited_nodes = set()
+    visited_sockets = set()
+
+    while queue:
+        current = queue.pop(0)
+        if current in visited_sockets:
+            continue
+        visited_sockets.add(current)
+
+        for link in current.links:
+            node = link.to_node
+            if node is None:
+                continue
+            if node.type == 'OUTPUT_FILE':
+                outputs.append((node, link.to_socket))
+                continue
+            if node in visited_nodes:
+                continue
+            visited_nodes.add(node)
+            for out_sock in node.outputs:
+                if out_sock.is_linked:
+                    queue.append(out_sock)
+
+    return outputs
+
+
 def _ensure_file_output(nt: bpy.types.NodeTree):
     """File Output が一つも無ければ VLM_AutoOutput を作る（既存があれば触らない）"""
     out = next((n for n in nt.nodes if n.type == 'OUTPUT_FILE'), None)
@@ -504,8 +570,7 @@ def _ensure_viewlayer_output_node(scene, nt, vl_name, *, blend_name, base_fp, im
 
     # 基本フォルダ（blend名 / VL名 まで）… パス名は _update_dynamic_file_output_paths で都度更新
     def sanitize(name):
-        import re
-        return re.sub(r'[^0-9A-Za-z_\-]', '_', name)
+        return _sanitize_name_for_path(name)
 
     base_dir = os.path.join(base_fp, sanitize(blend_name), sanitize(vl_name)) + os.sep
     fo.base_path = base_dir
@@ -568,20 +633,24 @@ def _update_dynamic_file_output_paths(scene):
     blend_name = pathlib.Path(bpy.data.filepath).stem or "Untitled"
     base_fp = scene.render.filepath
 
-    def sanitize(s): return re.sub(r'[^0-9A-Za-z_\-]', '_', s)
-
     for n in nt.nodes:
         if n.type != 'OUTPUT_FILE' or not n.get("vlm_managed"):
             continue
         vl = n.get("vl_name") or "ViewLayer"
         ps = n.get("pass_name") or "Image"
-        n.base_path = os.path.join(base_fp, sanitize(blend_name), sanitize(vl), sanitize(ps)) + os.sep
-        # スロット（常に1つ）を再設定
+        n.base_path = os.path.join(base_fp,
+                                  _sanitize_name_for_path(blend_name),
+                                  _sanitize_name_for_path(vl),
+                                  _sanitize_name_for_path(ps)) + os.sep
+        slot_idx = int(n.get("vlm_slot_index", 0)) if str(n.get("vlm_slot_index", "")).isdigit() else 0
+
         if not n.file_slots:
             n.file_slots.new(ps)
-        while len(n.file_slots) > 1:
-            n.file_slots.remove(n.file_slots[-1])
-        n.file_slots[0].path = f"{sanitize(blend_name)}_{sanitize(vl)}_{sanitize(ps)}_"
+        while len(n.file_slots) <= slot_idx:
+            n.file_slots.new(f"{ps}_{len(n.file_slots)}")
+
+        target_slot = n.file_slots[slot_idx]
+        target_slot.path = f"{_sanitize_name_for_path(blend_name)}_{_sanitize_name_for_path(vl)}_{_sanitize_name_for_path(ps)}_"
 
 # =========================================================
 # AO 乗算チェーン（チェックON時のみ）
@@ -923,17 +992,26 @@ def _prepare_compositor_nodes(scene):
             sock = rl.outputs.get(name)
             if not sock:
                 continue
-            fo = _ensure_output_node_for_pass(scene, nt, vl.name, name,
-                                              blend_name=blend_name, base_fp=base_fp, img_set=img_set,
-                                              x=900, y=(-400 * i) + y0 - dy * j)
-            # 入力は常に1つ：既存リンクが別ソースなら外して差し替え
-            inp = fo.inputs[0]
-            if inp.is_linked:
-                lk = inp.links[0]
-                if lk.from_socket != sock:
-                    nt.links.remove(lk)
-            if not inp.is_linked:
-                nt.links.new(sock, inp)
+            existing = _find_connected_file_outputs_from_socket(sock)
+            if existing:
+                fo, inp = existing[0]
+                try:
+                    idx = list(fo.inputs).index(inp)
+                except ValueError:
+                    idx = 0
+                _configure_output_node_for_pass(fo, name, vl.name, blend_name, base_fp, img_set, slot_index=idx)
+            else:
+                fo = _ensure_output_node_for_pass(scene, nt, vl.name, name,
+                                                  blend_name=blend_name, base_fp=base_fp, img_set=img_set,
+                                                  x=900, y=(-400 * i) + y0 - dy * j)
+                # 入力は常に1つ：既存リンクが別ソースなら外して差し替え
+                inp = fo.inputs[0]
+                if inp.is_linked:
+                    lk = inp.links[0]
+                    if lk.from_socket != sock:
+                        nt.links.remove(lk)
+                if not inp.is_linked:
+                    nt.links.new(sock, inp)
 
         # AOVパス
         start = len(active_names)
@@ -941,16 +1019,25 @@ def _prepare_compositor_nodes(scene):
             sock = rl.outputs.get(name)
             if not sock:
                 continue
-            fo = _ensure_output_node_for_pass(scene, nt, vl.name, name,
-                                              blend_name=blend_name, base_fp=base_fp, img_set=img_set,
-                                              x=1200, y=(-400 * i) + y0 - dy * (start + k))
-            inp = fo.inputs[0]
-            if inp.is_linked:
-                lk = inp.links[0]
-                if lk.from_socket != sock:
-                    nt.links.remove(lk)
-            if not inp.is_linked:
-                nt.links.new(sock, inp)
+            existing = _find_connected_file_outputs_from_socket(sock)
+            if existing:
+                fo, inp = existing[0]
+                try:
+                    idx = list(fo.inputs).index(inp)
+                except ValueError:
+                    idx = 0
+                _configure_output_node_for_pass(fo, name, vl.name, blend_name, base_fp, img_set, slot_index=idx)
+            else:
+                fo = _ensure_output_node_for_pass(scene, nt, vl.name, name,
+                                                  blend_name=blend_name, base_fp=base_fp, img_set=img_set,
+                                                  x=1200, y=(-400 * i) + y0 - dy * (start + k))
+                inp = fo.inputs[0]
+                if inp.is_linked:
+                    lk = inp.links[0]
+                    if lk.from_socket != sock:
+                        nt.links.remove(lk)
+                if not inp.is_linked:
+                    nt.links.new(sock, inp)
 
     # 仕上げ：念のためパス更新
     _update_dynamic_file_output_paths(scene)

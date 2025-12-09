@@ -230,7 +230,7 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
         cbox = layout.box()
         for coll in self.collections:
             row = cbox.row(align=True)
-            row.separator(factor=0.4 + 0.4 * coll.level)
+            row.separator(factor=0.4 + 1 * coll.level)
             row.prop(coll, "enabled", text="", toggle=True)
             row.label(text=coll.name, icon='OUTLINER_COLLECTION')
 
@@ -713,7 +713,7 @@ class VLM_PT_panel(bpy.types.Panel):
             # ── 1行（1段）にまとめる行コンテナ ─────────────────
             row = layout.row(align=True)
             # 階層のインデント
-            row.separator(factor=0.4 + 0.3 * d)
+            row.separator(factor=0.4 + 1 * d)
             # コレクション名
             row.label(text=f"{coll.name}", icon='OUTLINER_COLLECTION')
 
