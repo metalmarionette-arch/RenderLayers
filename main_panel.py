@@ -33,6 +33,7 @@ class VLM_PG_collection_toggle(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(name="Collection Name")
     enabled: bpy.props.BoolProperty(name="Enabled", default=True)
     level: bpy.props.IntProperty(name="Depth", default=0)
+    tree_prefix: bpy.props.StringProperty(name="Tree Prefix", default="")
 
 def _fold(layout, owner, prop_name, title):
     """折りたたみ安全版：プロパティが無い場合でもUIが落ちない"""
@@ -187,13 +188,28 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
     name_suffix: bpy.props.StringProperty(name="サフィックス", description="名前の末尾に付ける文字列")
     custom_name: bpy.props.StringProperty(name="指定名", description="ここに入力するとこの名前を元に複製します")
 
-    def _collect_layer_collections(self, root, level=0):
+    @staticmethod
+    def _make_tree_prefix(branch_state):
+        if not branch_state:
+            return ""
+
+        parts = []
+        for is_last in branch_state[:-1]:
+            parts.append("    " if is_last else "│   ")
+        parts.append("└─ " if branch_state[-1] else "├─ ")
+        return "".join(parts)
+
+    def _collect_layer_collections(self, root, level=0, branch_state=()):
         entry = self.collections.add()
         entry.name = root.collection.name
         entry.enabled = not bool(root.exclude)
         entry.level = level
-        for child in root.children:
-            self._collect_layer_collections(child, level + 1)
+        entry.tree_prefix = self._make_tree_prefix(branch_state)
+
+        children = list(root.children)
+        for idx, child in enumerate(children):
+            is_last = (idx == len(children) - 1)
+            self._collect_layer_collections(child, level + 1, (*branch_state, is_last))
 
     def invoke(self, context, event):
         self.viewlayers.clear(); self.collections.clear()
@@ -220,15 +236,18 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
             row.label(text=item.name, icon='RENDERLAYERS')
 
         layout.separator()
-        layout.label(text="名前置換 (任意)", icon='SORTALPHA')
+        layout.label(text="名前設定 (任意)", icon='SORTALPHA')
         name_box = layout.box()
+        name_box.prop(self, "custom_name", text="指定名")
+
         row = name_box.row(align=True)
         row.prop(self, "rename_from", text="置換元")
         row.prop(self, "rename_to", text="置換先")
+
         row = name_box.row(align=True)
         row.prop(self, "name_prefix", text="プレフィックス")
         row.prop(self, "name_suffix", text="サフィックス")
-        name_box.prop(self, "custom_name", text="指定名")
+
         hint = name_box.box()
         hint.label(text="例: glay→bl として複製すると alp_glay_C1 → alp_bl_C1", icon='INFO')
 
@@ -237,7 +256,7 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
         cbox = layout.box()
         for coll in self.collections:
             row = cbox.row(align=True)
-            row.separator(factor=0.8 + 0.4 * coll.level)
+            row.label(text=coll.tree_prefix, icon='BLANK1')
             row.prop(coll, "enabled", text="", toggle=True)
             row.label(text=coll.name, icon='OUTLINER_COLLECTION')
 
