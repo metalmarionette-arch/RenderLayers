@@ -37,6 +37,35 @@ class VLM_PG_collection_toggle(bpy.types.PropertyGroup):
     enabled: bpy.props.BoolProperty(name="Enabled", default=True)
     level: bpy.props.IntProperty(name="Depth", default=0)
 
+
+class VLM_PG_render_layer_entry(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(name="ViewLayer Name")
+
+    engine_enable: bpy.props.BoolProperty(name="エンジンを上書き", default=False)
+    engine: bpy.props.EnumProperty(name="エンジン", items=ro.ENGINES, default="BLENDER_EEVEE_NEXT")
+
+    samples_enable: bpy.props.BoolProperty(name="サンプル数を上書き", default=False)
+    samples: bpy.props.IntProperty(name="サンプル数", default=64, min=1, max=4096)
+
+    camera_enable: bpy.props.BoolProperty(name="カメラを上書き", default=False)
+    camera: bpy.props.PointerProperty(name="カメラ", type=bpy.types.Object, poll=lambda _self, obj: bool(obj) and obj.type == 'CAMERA')
+
+    world_enable: bpy.props.BoolProperty(name="World を上書き", default=False)
+    world: bpy.props.PointerProperty(name="World", type=bpy.types.World)
+
+    format_enable: bpy.props.BoolProperty(name="フォーマットを上書き", default=False)
+    resolution_x: bpy.props.IntProperty(name="解像度X", default=1920, min=1, max=16384)
+    resolution_y: bpy.props.IntProperty(name="解像度Y", default=1080, min=1, max=16384)
+    resolution_percentage: bpy.props.IntProperty(name="スケール(%)", default=100, min=1, max=1000)
+    aspect_x: bpy.props.FloatProperty(name="アスペクトX", default=1.0, min=0.1)
+    aspect_y: bpy.props.FloatProperty(name="アスペクトY", default=1.0, min=0.1)
+    frame_rate: bpy.props.FloatProperty(name="FPS", default=24.0, min=0.01, max=60000.0, precision=3)
+
+    frame_enable: bpy.props.BoolProperty(name="フレーム範囲を上書き", default=False)
+    frame_start: bpy.props.IntProperty(name="開始フレーム", default=1, min=0)
+    frame_end: bpy.props.IntProperty(name="終了フレーム", default=250, min=0)
+    frame_step: bpy.props.IntProperty(name="フレームステップ", default=1, min=1)
+
 def _fold(layout, owner, prop_name, title):
     """折りたたみ安全版：プロパティが無い場合でもUIが落ちない"""
     is_open = bool(getattr(owner, prop_name, False))
@@ -473,218 +502,135 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
     bl_label  = "レンダー設定を一括適用"
     bl_options = {'REGISTER', 'UNDO'}
 
-    viewlayers: bpy.props.CollectionProperty(type=VLM_PG_viewlayer_target)
-
-    @staticmethod
-    def _camera_poll(_self, obj):
-        return bool(obj) and obj.type == 'CAMERA'
-
-    engine_enable: bpy.props.BoolProperty(name="エンジンをこの値で上書き", default=False)
-    engine: bpy.props.EnumProperty(name="エンジン", items=ro.ENGINES, default="BLENDER_EEVEE_NEXT")
-
-    samples_enable: bpy.props.BoolProperty(name="サンプル数をこの値で上書き", default=False)
-    samples: bpy.props.IntProperty(name="サンプル数", default=64, min=1, max=4096)
-
-    camera_enable: bpy.props.BoolProperty(name="カメラをこの値で上書き", default=False)
-    camera: bpy.props.PointerProperty(name="カメラ", type=bpy.types.Object, poll=_camera_poll.__func__)
-
-    world_enable: bpy.props.BoolProperty(name="World をこの値で上書き", default=False)
-    world: bpy.props.PointerProperty(name="World", type=bpy.types.World)
-
-    format_enable: bpy.props.BoolProperty(name="フォーマットをこの値で上書き", default=False)
-    resolution_x: bpy.props.IntProperty(name="解像度X", default=1920, min=1, max=16384)
-    resolution_y: bpy.props.IntProperty(name="解像度Y", default=1080, min=1, max=16384)
-    resolution_percentage: bpy.props.IntProperty(name="スケール(%)", default=100, min=1, max=1000)
-    aspect_x: bpy.props.FloatProperty(name="アスペクトX", default=1.0, min=0.1)
-    aspect_y: bpy.props.FloatProperty(name="アスペクトY", default=1.0, min=0.1)
-    frame_rate: bpy.props.FloatProperty(name="FPS", default=24.0, min=0.01, max=60000.0, precision=3)
-
-    frame_enable: bpy.props.BoolProperty(name="フレーム範囲をこの値で上書き", default=False)
-    frame_start: bpy.props.IntProperty(name="開始", default=1, min=0)
-    frame_end: bpy.props.IntProperty(name="終了", default=250, min=0)
-    frame_step: bpy.props.IntProperty(name="ステップ", default=1, min=1)
+    render_layers: bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry)
 
     def invoke(self, context, event):
-        self.viewlayers.clear()
+        self.render_layers.clear()
         sc = context.scene
-        active = context.view_layer
-        active_name = active.name if active else ""
 
         for vl in sc.view_layers:
-            entry = self.viewlayers.add()
-            entry.name = vl.name
-            entry.selected = (vl.name == active_name)
-
-        if active:
-            rs = getattr(active, "vlm_render", None)
-            if rs:
-                self.engine_enable = bool(getattr(rs, "engine_enable", False))
-                self.engine = getattr(rs, "engine", self.engine)
-
-                self.samples_enable = bool(getattr(rs, "samples_enable", False))
-                self.samples = getattr(rs, "samples", self.samples)
-
-                self.camera_enable = bool(getattr(rs, "camera_enable", False))
-                self.camera = getattr(rs, "camera", None)
-
-                self.world_enable = bool(getattr(rs, "world_enable", False))
-                self.world = getattr(active, "vlm_world", None) or sc.world
-
-                self.format_enable = bool(getattr(rs, "format_enable", False))
-                self.resolution_x = getattr(rs, "resolution_x", sc.render.resolution_x)
-                self.resolution_y = getattr(rs, "resolution_y", sc.render.resolution_y)
-                self.resolution_percentage = getattr(rs, "resolution_percentage", sc.render.resolution_percentage)
-                self.aspect_x = getattr(rs, "aspect_x", sc.render.pixel_aspect_x)
-                self.aspect_y = getattr(rs, "aspect_y", sc.render.pixel_aspect_y)
-                self.frame_rate = getattr(rs, "frame_rate", sc.render.fps / sc.render.fps_base)
-
-                self.frame_enable = bool(getattr(rs, "frame_enable", False))
-                self.frame_start = getattr(rs, "frame_start", sc.frame_start)
-                self.frame_end = getattr(rs, "frame_end", sc.frame_end)
-                self.frame_step = getattr(rs, "frame_step", sc.frame_step)
-
-        return context.window_manager.invoke_props_dialog(self, width=520)
-
-    def draw(self, context):
-        layout = self.layout
-        layout.label(text="適用対象のビューレイヤー", icon='RENDERLAYERS')
-        box = layout.box()
-        for item in self.viewlayers:
-            row = box.row(align=True)
-            row.prop(item, "selected", text="")
-            row.label(text=item.name, icon='RENDERLAYERS')
-
-        layout.separator()
-
-        layout.label(text="現在の設定一覧", icon='INFO')
-        list_box = layout.box()
-        for vl in context.scene.view_layers:
             rs = getattr(vl, "vlm_render", None)
             if rs is None:
                 continue
 
-            vbox = list_box.box()
-            header = vbox.row(align=True)
-            header.label(text=vl.name, icon='RENDERLAYERS')
+            entry = self.render_layers.add()
+            entry.name = vl.name
 
-            row1 = vbox.row(align=True)
-            row1.label(
-                icon='CHECKBOX_HLT' if rs.engine_enable else 'CHECKBOX_DEHLT',
-                text=f"エンジン: {ENGINE_LABELS.get(rs.engine, rs.engine)}",
-            )
-            fmt_desc = (
-                f"{rs.resolution_x}x{rs.resolution_y} @{rs.resolution_percentage}%"
-                f" / アスペクト {rs.aspect_x:g}:{rs.aspect_y:g} / FPS {rs.frame_rate:g}"
-            )
-            row1.label(
-                icon='CHECKBOX_HLT' if rs.format_enable else 'CHECKBOX_DEHLT',
-                text=f"フォーマット: {fmt_desc}",
-            )
+            entry.engine_enable = bool(getattr(rs, "engine_enable", False))
+            entry.engine = getattr(rs, "engine", entry.engine)
 
-            row2 = vbox.row(align=True)
-            row2.label(
-                icon='CHECKBOX_HLT' if rs.samples_enable else 'CHECKBOX_DEHLT',
-                text=f"サンプル数: {rs.samples}",
-            )
-            frame_desc = f"{rs.frame_start} - {rs.frame_end} (ステップ {rs.frame_step})"
-            row2.label(
-                icon='CHECKBOX_HLT' if rs.frame_enable else 'CHECKBOX_DEHLT',
-                text=f"フレーム範囲: {frame_desc}",
-            )
+            entry.samples_enable = bool(getattr(rs, "samples_enable", False))
+            entry.samples = getattr(rs, "samples", entry.samples)
 
-        layout.separator()
+            entry.camera_enable = bool(getattr(rs, "camera_enable", False))
+            entry.camera = getattr(rs, "camera", None)
 
-        layout.label(text="レンダー設定", icon='RENDER_STILL')
-        props = layout.box()
+            entry.world_enable = bool(getattr(rs, "world_enable", False))
+            entry.world = getattr(vl, "vlm_world", None) or sc.world
 
-        erow = props.row(align=True)
-        erow.prop(self, "engine_enable", text="")
-        erow.prop(self, "engine", expand=True)
+            entry.format_enable = bool(getattr(rs, "format_enable", False))
+            entry.resolution_x = getattr(rs, "resolution_x", sc.render.resolution_x)
+            entry.resolution_y = getattr(rs, "resolution_y", sc.render.resolution_y)
+            entry.resolution_percentage = getattr(rs, "resolution_percentage", sc.render.resolution_percentage)
+            entry.aspect_x = getattr(rs, "aspect_x", sc.render.pixel_aspect_x)
+            entry.aspect_y = getattr(rs, "aspect_y", sc.render.pixel_aspect_y)
+            entry.frame_rate = getattr(rs, "frame_rate", sc.render.fps / sc.render.fps_base)
 
-        srow = props.row(align=True)
-        srow.prop(self, "samples_enable", text="")
-        sval = srow.row(align=True)
-        sval.enabled = bool(self.samples_enable)
-        sval.prop(self, "samples", text="サンプル数")
+            entry.frame_enable = bool(getattr(rs, "frame_enable", False))
+            entry.frame_start = getattr(rs, "frame_start", sc.frame_start)
+            entry.frame_end = getattr(rs, "frame_end", sc.frame_end)
+            entry.frame_step = getattr(rs, "frame_step", sc.frame_step)
 
-        crow = props.row(align=True)
-        crow.prop(self, "camera_enable", text="")
-        cam_val = crow.row()
-        cam_val.enabled = bool(self.camera_enable)
-        cam_val.prop(self, "camera", text="カメラ")
+        return context.window_manager.invoke_props_dialog(self, width=980)
 
-        wrow = props.row(align=True)
-        wrow.prop(self, "world_enable", text="")
-        wval = wrow.row()
-        wval.enabled = bool(self.world_enable)
-        wval.prop(self, "world", text="World")
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="レンダー設定一覧", icon='RENDER_STILL')
+        box = layout.box()
 
-        frow = props.row(align=True)
-        frow.prop(self, "format_enable", text="")
-        fvals = frow.row()
-        fvals.enabled = bool(self.format_enable)
-        fvals.prop(self, "resolution_x", text="X")
-        fvals.prop(self, "resolution_y", text="Y")
-        fvals.prop(self, "resolution_percentage", text="スケール")
-        fvals = props.row(align=True)
-        fvals.enabled = bool(self.format_enable)
-        fvals.prop(self, "aspect_x", text="アスペクトX")
-        fvals.prop(self, "aspect_y", text="アスペクトY")
-        fvals.prop(self, "frame_rate", text="FPS")
+        for entry in self.render_layers:
+            row = box.row(align=True)
+            row.label(text=entry.name, icon='RENDERLAYERS')
 
-        frrow = props.row(align=True)
-        frrow.prop(self, "frame_enable", text="")
-        frvals = frrow.row()
-        frvals.enabled = bool(self.frame_enable)
-        frvals.prop(self, "frame_start", text="開始")
-        frvals.prop(self, "frame_end", text="終了")
-        frvals.prop(self, "frame_step", text="ステップ")
+            erow = row.row(align=True)
+            erow.prop(entry, "engine_enable", text="")
+            erow.prop(entry, "engine", text="")
+
+            srow = row.row(align=True)
+            srow.prop(entry, "samples_enable", text="")
+            sval = srow.row(align=True)
+            sval.enabled = bool(entry.samples_enable)
+            sval.prop(entry, "samples", text="サンプル数")
+
+            crow = row.row(align=True)
+            crow.prop(entry, "camera_enable", text="")
+            cam_val = crow.row(align=True)
+            cam_val.enabled = bool(entry.camera_enable)
+            cam_val.prop(entry, "camera", text="カメラ")
+
+            wrow = row.row(align=True)
+            wrow.prop(entry, "world_enable", text="")
+            wval = wrow.row(align=True)
+            wval.enabled = bool(entry.world_enable)
+            wval.prop(entry, "world", text="World")
+
+            frow = row.row(align=True)
+            frow.prop(entry, "format_enable", text="")
+            fvals = frow.row(align=True)
+            fvals.enabled = bool(entry.format_enable)
+            fvals.prop(entry, "resolution_x", text="X")
+            fvals.prop(entry, "resolution_y", text="Y")
+            fvals.prop(entry, "resolution_percentage", text="スケール")
+            fvals.prop(entry, "aspect_x", text="アスペクトX")
+            fvals.prop(entry, "aspect_y", text="アスペクトY")
+            fvals.prop(entry, "frame_rate", text="FPS")
+
+            frrow = row.row(align=True)
+            frrow.prop(entry, "frame_enable", text="")
+            frvals = frrow.row(align=True)
+            frvals.enabled = bool(entry.frame_enable)
+            frvals.prop(entry, "frame_start", text="開始")
+            frvals.prop(entry, "frame_end", text="終了")
+            frvals.prop(entry, "frame_step", text="ステップ")
 
     def execute(self, context):
         sc = context.scene
-        targets = [i.name for i in self.viewlayers if i.selected]
-        if not targets and context.view_layer:
-            targets = [context.view_layer.name]
-        if not targets:
-            self.report({'WARNING'}, "ビューレイヤーを選択してください")
-            return {'CANCELLED'}
-
         applied = []
-        for name in targets:
-            vl = sc.view_layers.get(name)
+        for entry in self.render_layers:
+            vl = sc.view_layers.get(entry.name)
             if vl is None:
                 continue
             rs = getattr(vl, "vlm_render", None)
             if rs is None:
                 continue
 
-            rs.engine_enable = bool(self.engine_enable)
-            rs.engine = self.engine
+            rs.engine_enable = bool(entry.engine_enable)
+            rs.engine = entry.engine
 
-            rs.samples_enable = bool(self.samples_enable)
-            rs.samples = self.samples
+            rs.samples_enable = bool(entry.samples_enable)
+            rs.samples = entry.samples
 
-            rs.camera_enable = bool(self.camera_enable)
-            rs.camera = self.camera if self.camera_enable else rs.camera
+            rs.camera_enable = bool(entry.camera_enable)
+            rs.camera = entry.camera if entry.camera_enable else rs.camera
 
-            rs.world_enable = bool(self.world_enable)
-            if self.world_enable:
-                vl.vlm_world = self.world
+            rs.world_enable = bool(entry.world_enable)
+            if entry.world_enable:
+                vl.vlm_world = entry.world
 
-            rs.format_enable = bool(self.format_enable)
-            rs.resolution_x = self.resolution_x
-            rs.resolution_y = self.resolution_y
-            rs.resolution_percentage = self.resolution_percentage
-            rs.aspect_x = self.aspect_x
-            rs.aspect_y = self.aspect_y
-            rs.frame_rate = self.frame_rate
+            rs.format_enable = bool(entry.format_enable)
+            rs.resolution_x = entry.resolution_x
+            rs.resolution_y = entry.resolution_y
+            rs.resolution_percentage = entry.resolution_percentage
+            rs.aspect_x = entry.aspect_x
+            rs.aspect_y = entry.aspect_y
+            rs.frame_rate = entry.frame_rate
 
-            rs.frame_enable = bool(self.frame_enable)
-            rs.frame_start = self.frame_start
-            rs.frame_end = self.frame_end
-            rs.frame_step = self.frame_step
+            rs.frame_enable = bool(entry.frame_enable)
+            rs.frame_start = entry.frame_start
+            rs.frame_end = entry.frame_end
+            rs.frame_step = entry.frame_step
 
-            applied.append(name)
+            applied.append(entry.name)
 
         if not applied:
             self.report({'WARNING'}, "適用できるビューレイヤーがありません")
@@ -1032,6 +978,7 @@ def register():
         VLM_PG_viewlayer_target,
         VLM_PG_collection_multi_state,
         VLM_PG_collection_toggle,
+        VLM_PG_render_layer_entry,
         VLM_OT_prepare_output_nodes_plus,
         VLM_OT_duplicate_viewlayers_popup,
         VLM_OT_apply_collection_settings_popup,
