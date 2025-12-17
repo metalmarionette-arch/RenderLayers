@@ -18,6 +18,8 @@ STATE_ITEMS = [
     ('OFF',  "OFF",    "OFF にする"),
 ]
 
+ENGINE_LABELS = {key: label for key, label, _ in ro.ENGINES}
+
 
 class VLM_PG_collection_multi_state(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(name="Collection Name")
@@ -551,6 +553,44 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             row = box.row(align=True)
             row.prop(item, "selected", text="")
             row.label(text=item.name, icon='RENDERLAYERS')
+
+        layout.separator()
+
+        layout.label(text="現在の設定一覧", icon='INFO')
+        list_box = layout.box()
+        for vl in context.scene.view_layers:
+            rs = getattr(vl, "vlm_render", None)
+            if rs is None:
+                continue
+
+            vbox = list_box.box()
+            header = vbox.row(align=True)
+            header.label(text=vl.name, icon='RENDERLAYERS')
+
+            row1 = vbox.row(align=True)
+            row1.label(
+                icon='CHECKBOX_HLT' if rs.engine_enable else 'CHECKBOX_DEHLT',
+                text=f"エンジン: {ENGINE_LABELS.get(rs.engine, rs.engine)}",
+            )
+            fmt_desc = (
+                f"{rs.resolution_x}x{rs.resolution_y} @{rs.resolution_percentage}%"
+                f" / アスペクト {rs.aspect_x:g}:{rs.aspect_y:g} / FPS {rs.frame_rate:g}"
+            )
+            row1.label(
+                icon='CHECKBOX_HLT' if rs.format_enable else 'CHECKBOX_DEHLT',
+                text=f"フォーマット: {fmt_desc}",
+            )
+
+            row2 = vbox.row(align=True)
+            row2.label(
+                icon='CHECKBOX_HLT' if rs.samples_enable else 'CHECKBOX_DEHLT',
+                text=f"サンプル数: {rs.samples}",
+            )
+            frame_desc = f"{rs.frame_start} - {rs.frame_end} (ステップ {rs.frame_step})"
+            row2.label(
+                icon='CHECKBOX_HLT' if rs.frame_enable else 'CHECKBOX_DEHLT',
+                text=f"フレーム範囲: {frame_desc}",
+            )
 
         layout.separator()
 
