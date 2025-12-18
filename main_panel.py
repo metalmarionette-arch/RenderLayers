@@ -502,15 +502,22 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
     bl_label  = "レンダー設定を一括適用"
     bl_options = {'REGISTER', 'UNDO'}
 
-    # CollectionProperty はアノテーションのみで登録する。クラス属性への代入は
-    # _PropertyDeferred のまま残り、clear() が呼べないケースがあったため除去。
+    # クラス登録時に RNA が確実に生成されるよう、アノテーションと代入の両方を
+    # 設けておく。アドオン再読み込み時に _PropertyDeferred のまま残るケースへ
+    # のフォールバックは invoke で再設定する。
     render_layers: bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry)
+    render_layers = bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry)
 
     def invoke(self, context, event):
+        prop = getattr(self.__class__, "render_layers", None)
+        if prop is None or isinstance(prop, bpy.props._PropertyDeferred):
+            setattr(self.__class__, "render_layers", bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry))
+
         try:
             self.render_layers.clear()
         except AttributeError:
-            # まれに _PropertyDeferred のまま残る場合があるので再設定してからクリア
+            # まれにインスタンス側にまだ作られていない場合があるので、
+            # プロパティを再付与してからクリア
             setattr(self.__class__, "render_layers", bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry))
             self.render_layers.clear()
         sc = context.scene
