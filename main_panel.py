@@ -502,11 +502,13 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
     bl_label  = "レンダー設定を一括適用"
     bl_options = {'REGISTER', 'UNDO'}
 
-    # 登録時に確実に実体化させる
-    render_layers: bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry)
-
     def invoke(self, context, event):
-        self.render_layers.clear()
+        layers = getattr(context.window_manager, "vlm_render_layers", None)
+        if layers is None:
+            self.report({'ERROR'}, "レンダー設定用の一時コレクションが初期化されていません")
+            return {'CANCELLED'}
+
+        layers.clear()
         sc = context.scene
 
         for vl in sc.view_layers:
@@ -514,7 +516,7 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             if rs is None:
                 continue
 
-            entry = self.render_layers.add()
+            entry = layers.add()
             entry.name = vl.name
 
             entry.engine_enable = bool(getattr(rs, "engine_enable", False))
@@ -549,7 +551,12 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
         layout.label(text="レンダー設定一覧", icon='RENDER_STILL')
         box = layout.box()
 
-        for entry in self.render_layers:
+        layers = getattr(context.window_manager, "vlm_render_layers", None)
+        if layers is None:
+            layout.label(text="(データを初期化できませんでした)", icon='ERROR')
+            return
+
+        for entry in layers:
             row = box.row(align=True)
             row.label(text=entry.name, icon='RENDERLAYERS')
 
@@ -597,7 +604,12 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
     def execute(self, context):
         sc = context.scene
         applied = []
-        for entry in self.render_layers:
+        layers = getattr(context.window_manager, "vlm_render_layers", None)
+        if layers is None:
+            self.report({'ERROR'}, "レンダー設定を取得できませんでした")
+            return {'CANCELLED'}
+
+        for entry in layers:
             vl = sc.view_layers.get(entry.name)
             if vl is None:
                 continue
@@ -968,18 +980,6 @@ class VLM_PT_panel(bpy.types.Panel):
 # register / unregister
 # ──────────────────────────────────────────────
 def register():
-    # Scene プロパティ（チェックボックス）
-    bpy.types.Scene.vlm_enable_ao_multiply = bpy.props.BoolProperty(
-        name="AO乗算を追加",
-        description="“出力ノードを準備” 実行時に、レンダーレイヤーの『画像』出力へAOを乗算（RGBカーブ適用）します",
-        default=False
-    )
-
-    # Operator プロパティ（コレクション）
-    VLM_OT_apply_render_settings_popup.render_layers = bpy.props.CollectionProperty(
-        type=VLM_PG_render_layer_entry
-    )
-
     for cls in (
         VLM_PG_viewlayer_target,
         VLM_PG_collection_multi_state,
@@ -992,6 +992,18 @@ def register():
         VLM_PT_panel,
     ):
         bpy.utils.register_class(cls)
+
+    # Scene プロパティ（チェックボックス）
+    bpy.types.Scene.vlm_enable_ao_multiply = bpy.props.BoolProperty(
+        name="AO乗算を追加",
+        description="“出力ノードを準備” 実行時に、レンダーレイヤーの『画像』出力へAOを乗算（RGBカーブ適用）します",
+        default=False
+    )
+
+    # WindowManager プロパティ（レンダー設定一括適用用の一時コレクション）
+    bpy.types.WindowManager.vlm_render_layers = bpy.props.CollectionProperty(
+        type=VLM_PG_render_layer_entry,
+    )
     
     if not hasattr(bpy.types.Scene, "vlm_ui_show_world"):
         bpy.types.Scene.vlm_ui_show_world = bpy.props.BoolProperty(
@@ -999,8 +1011,8 @@ def register():
         )
         
 def unregister():
-    if hasattr(VLM_OT_apply_render_settings_popup, "render_layers"):
-        del VLM_OT_apply_render_settings_popup.render_layers
+    if hasattr(bpy.types.WindowManager, "vlm_render_layers"):
+        del bpy.types.WindowManager.vlm_render_layers
 
     for cls in (
         VLM_PT_panel,
