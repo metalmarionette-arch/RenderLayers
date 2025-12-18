@@ -502,24 +502,11 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
     bl_label  = "レンダー設定を一括適用"
     bl_options = {'REGISTER', 'UNDO'}
 
-    # クラス登録時に RNA が確実に生成されるよう、アノテーションと代入の両方を
-    # 設けておく。アドオン再読み込み時に _PropertyDeferred のまま残るケースへ
-    # のフォールバックは invoke で再設定する。
+    # 登録時に確実に実体化させる
     render_layers: bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry)
-    render_layers = bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry)
 
     def invoke(self, context, event):
-        prop = getattr(self.__class__, "render_layers", None)
-        if prop is None or isinstance(prop, bpy.props._PropertyDeferred):
-            setattr(self.__class__, "render_layers", bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry))
-
-        try:
-            self.render_layers.clear()
-        except AttributeError:
-            # まれにインスタンス側にまだ作られていない場合があるので、
-            # プロパティを再付与してからクリア
-            setattr(self.__class__, "render_layers", bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry))
-            self.render_layers.clear()
+        self.render_layers.clear()
         sc = context.scene
 
         for vl in sc.view_layers:
@@ -988,6 +975,11 @@ def register():
         default=False
     )
 
+    # Operator プロパティ（コレクション）
+    VLM_OT_apply_render_settings_popup.render_layers = bpy.props.CollectionProperty(
+        type=VLM_PG_render_layer_entry
+    )
+
     for cls in (
         VLM_PG_viewlayer_target,
         VLM_PG_collection_multi_state,
@@ -1007,6 +999,9 @@ def register():
         )
         
 def unregister():
+    if hasattr(VLM_OT_apply_render_settings_popup, "render_layers"):
+        del VLM_OT_apply_render_settings_popup.render_layers
+
     for cls in (
         VLM_PT_panel,
         VLM_OT_apply_render_settings_popup,
