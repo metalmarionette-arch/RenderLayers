@@ -502,17 +502,17 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
     bl_label  = "レンダー設定を一括適用"
     bl_options = {'REGISTER', 'UNDO'}
 
-    # Blender 4.5 でまれにプロパティが未初期化のまま invoke に来るケースがあるので、
-    # アノテーションだけでなくクラス属性にも明示的に割り当てておく。
-    render_layers: bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry) = bpy.props.CollectionProperty(
-        type=VLM_PG_render_layer_entry
-    )
+    # CollectionProperty はアノテーションのみで登録する。クラス属性への代入は
+    # _PropertyDeferred のまま残り、clear() が呼べないケースがあったため除去。
+    render_layers: bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry)
 
     def invoke(self, context, event):
-        # 万一プロパティが存在しない場合でも安全に初期化する
-        if not hasattr(self, "render_layers"):
+        try:
+            self.render_layers.clear()
+        except AttributeError:
+            # まれに _PropertyDeferred のまま残る場合があるので再設定してからクリア
             setattr(self.__class__, "render_layers", bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry))
-        self.render_layers.clear()
+            self.render_layers.clear()
         sc = context.scene
 
         for vl in sc.view_layers:
