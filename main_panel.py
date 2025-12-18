@@ -558,7 +558,9 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
 
         for entry in layers:
             row = box.row(align=True)
-            row.label(text=entry.name, icon='RENDERLAYERS')
+            name_cell = row.row(align=True)
+            name_cell.scale_x = 2.0
+            name_cell.label(text=entry.name, icon='RENDERLAYERS')
 
             erow = row.row(align=True)
             erow.prop(entry, "engine_enable", text="")
@@ -574,13 +576,13 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             crow.prop(entry, "camera_enable", text="")
             cam_val = crow.row(align=True)
             cam_val.enabled = bool(entry.camera_enable)
-            cam_val.prop(entry, "camera", text="カメラ")
+            cam_val.prop(entry, "camera", text="")
 
             wrow = row.row(align=True)
             wrow.prop(entry, "world_enable", text="")
             wval = wrow.row(align=True)
             wval.enabled = bool(entry.world_enable)
-            wval.prop(entry, "world", text="World")
+            wval.prop(entry, "world", text="")
 
             frow = row.row(align=True)
             frow.prop(entry, "format_enable", text="")
