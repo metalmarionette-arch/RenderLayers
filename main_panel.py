@@ -502,9 +502,16 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
     bl_label  = "レンダー設定を一括適用"
     bl_options = {'REGISTER', 'UNDO'}
 
-    render_layers: bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry)
+    # Blender 4.5 でまれにプロパティが未初期化のまま invoke に来るケースがあるので、
+    # アノテーションだけでなくクラス属性にも明示的に割り当てておく。
+    render_layers: bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry) = bpy.props.CollectionProperty(
+        type=VLM_PG_render_layer_entry
+    )
 
     def invoke(self, context, event):
+        # 万一プロパティが存在しない場合でも安全に初期化する
+        if not hasattr(self, "render_layers"):
+            setattr(self.__class__, "render_layers", bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry))
         self.render_layers.clear()
         sc = context.scene
 
@@ -999,6 +1006,7 @@ def unregister():
         VLM_OT_apply_collection_settings_popup,
         VLM_OT_duplicate_viewlayers_popup,
         VLM_OT_prepare_output_nodes_plus,
+        VLM_PG_render_layer_entry,
         VLM_PG_collection_toggle,
         VLM_PG_collection_multi_state,
         VLM_PG_viewlayer_target,
