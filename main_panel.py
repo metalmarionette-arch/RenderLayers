@@ -66,6 +66,92 @@ class VLM_PG_render_layer_entry(bpy.types.PropertyGroup):
     frame_end: bpy.props.IntProperty(name="終了フレーム", default=250, min=0)
     frame_step: bpy.props.IntProperty(name="フレームステップ", default=1, min=1)
 
+
+def _gather_shader_aovs_from_tree(nt, visited):
+    """ノードツリー内の AOV 出力名とタイプを収集（ノードグループも再帰）"""
+    if nt is None or nt in visited:
+        return {}
+    visited.add(nt)
+
+    found = {}
+    for node in getattr(nt, "nodes", []):
+        # シェーダー AOV 出力
+        if getattr(node, "bl_idname", "") == "ShaderNodeOutputAOV":
+            raw = (getattr(node, "name", "") or "").strip()
+            if not raw:
+                raw = (getattr(node, "label", "") or "").strip()
+            if raw:
+                aov_type = getattr(node, "type", "COLOR") or "COLOR"
+                # 既に同名があれば最初のタイプを優先
+                found.setdefault(raw, aov_type)
+        # ノードグループを再帰的に探索
+        elif getattr(node, "type", "") == 'GROUP':
+            sub_tree = getattr(node, "node_tree", None)
+            if sub_tree:
+                sub = _gather_shader_aovs_from_tree(sub_tree, visited)
+                for k, v in sub.items():
+                    found.setdefault(k, v)
+    return found
+
+
+def _gather_shader_aovs_from_material(mat):
+    """マテリアルに含まれる AOV 出力名を (名前→タイプ) で返す"""
+    if mat is None or not getattr(mat, "use_nodes", False):
+        return {}
+    nt = getattr(mat, "node_tree", None)
+    if nt is None:
+        return {}
+    return _gather_shader_aovs_from_tree(nt, set())
+
+
+def _collect_aov_names_for_view_layer(vl):
+    """ビューレイヤーに表示されているオブジェクトの AOV 名を集計"""
+    if vl is None:
+        return {}
+
+    names = {}
+    objs = getattr(vl, "objects", [])
+    for obj in objs:
+        # ビューレイヤーで可視なオブジェクトのみ対象
+        try:
+            if not obj.visible_get(view_layer=vl):
+                continue
+        except TypeError:
+            if not obj.visible_get():
+                continue
+        for slot in getattr(obj, "material_slots", []):
+            mat = getattr(slot, "material", None)
+            if mat is None:
+                continue
+            for nm, tp in _gather_shader_aovs_from_material(mat).items():
+                names.setdefault(nm, tp)
+    return names
+
+
+def _ensure_view_layer_aovs(vl, aov_map):
+    """ビューレイヤーに指定された AOV 名を追加（既存はスキップ）"""
+    if vl is None or not hasattr(vl, "aovs"):
+        return 0
+    existing = {aov.name for aov in getattr(vl, "aovs", [])}
+    added = 0
+    for nm, tp in aov_map.items():
+        if not nm or nm in existing:
+            continue
+        try:
+            aov = vl.aovs.new()
+        except Exception:
+            aov = vl.aovs.add()
+        aov.name = nm
+        if hasattr(aov, "type"):
+            try:
+                aov.type = tp
+            except Exception:
+                pass
+        existing.add(nm)
+        added += 1
+    return added
+
+
 def _fold(layout, owner, prop_name, title):
     """折りたたみ安全版：プロパティが無い場合でもUIが落ちない"""
     is_open = bool(getattr(owner, prop_name, False))
@@ -667,6 +753,45 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class VLM_OT_add_shader_aovs(bpy.types.Operator):
+    """表示中オブジェクトのマテリアルにある AOV 出力をビューレイヤーに追加する"""
+    bl_idname = "vlm.add_shader_aovs"
+    bl_label  = "シェーダーAOVを追加"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    apply_all: bpy.props.BoolProperty(
+        name="全てのビューレイヤーに追加",
+        description="全ビューレイヤーの表示オブジェクトを走査して AOV を追加する",
+        default=False,
+    )
+
+    def execute(self, context):
+        sc = context.scene
+        targets = list(sc.view_layers) if self.apply_all else [context.view_layer] if context.view_layer else []
+        if not targets:
+            self.report({'WARNING'}, "ビューレイヤーが見つかりません")
+            return {'CANCELLED'}
+
+        total_added = 0
+        per_layer = []
+        for vl in targets:
+            aov_map = _collect_aov_names_for_view_layer(vl)
+            if not aov_map:
+                continue
+            added = _ensure_view_layer_aovs(vl, aov_map)
+            if added:
+                total_added += added
+                per_layer.append(f"{vl.name}:{added}")
+
+        if not total_added:
+            self.report({'INFO'}, "追加できる AOV はありませんでした")
+            return {'CANCELLED'}
+
+        detail = ", ".join(per_layer) if per_layer else "なし"
+        self.report({'INFO'}, f"シェーダーAOVを追加しました ({detail})")
+        return {'FINISHED'}
+
+
 class VLM_PT_panel(bpy.types.Panel):
     bl_label       = "View Layer Manager (Light & Collection)"
     bl_idname      = "VLM_PT_panel"
@@ -893,6 +1018,15 @@ class VLM_PT_panel(bpy.types.Panel):
                 col.prop(vrs, "frame_step",  text="フレームステップ")
             layout.separator()
 
+        # 8.5) シェーダーAOV 自動追加
+        row = layout.row(align=True)
+        row.label(text="シェーダーAOV", icon='LIGHTPROBE_CUBEMAP')
+        op = row.operator("vlm.add_shader_aovs", text="このビューレイヤーに追加")
+        op.apply_all = False
+        op = row.operator("vlm.add_shader_aovs", text="全ビューレイヤーに追加")
+        op.apply_all = True
+        layout.separator()
+
         # 9) 出力ノード（自動）
         if _fold(layout, sc, "vlm_ui_show_output_nodes", "出力ノード（自動）"):
             if hasattr(bpy.types.Scene, "vlm_enable_ao_multiply"):
@@ -994,6 +1128,7 @@ def register():
         VLM_PG_collection_multi_state,
         VLM_PG_collection_toggle,
         VLM_PG_render_layer_entry,
+        VLM_OT_add_shader_aovs,
         VLM_OT_prepare_output_nodes_plus,
         VLM_OT_duplicate_viewlayers_popup,
         VLM_OT_apply_collection_settings_popup,
@@ -1029,6 +1164,7 @@ def unregister():
         VLM_OT_apply_collection_settings_popup,
         VLM_OT_duplicate_viewlayers_popup,
         VLM_OT_prepare_output_nodes_plus,
+        VLM_OT_add_shader_aovs,
         VLM_PG_render_layer_entry,
         VLM_PG_collection_toggle,
         VLM_PG_collection_multi_state,
