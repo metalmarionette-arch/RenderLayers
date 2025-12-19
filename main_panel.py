@@ -1020,7 +1020,7 @@ class VLM_PT_panel(bpy.types.Panel):
 
         # 8.5) シェーダーAOV 自動追加
         row = layout.row(align=True)
-        row.label(text="シェーダーAOV", icon='LIGHTPROBE_CUBEMAP')
+        row.label(text="シェーダーAOV", icon='NODE_COMPOSITING')
         op = row.operator("vlm.add_shader_aovs", text="このビューレイヤーに追加")
         op.apply_all = False
         op = row.operator("vlm.add_shader_aovs", text="全ビューレイヤーに追加")
