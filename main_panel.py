@@ -559,39 +559,41 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
         for entry in layers:
             row = box.row(align=True)
             name_cell = row.row(align=True)
-            name_cell.scale_x = 1.0
+            name_cell.ui_units_x = 8.0
             name_cell.label(text=entry.name, icon='RENDERLAYERS')
 
             erow = row.row(align=True)
             erow.prop(entry, "engine_enable", text="")
             evals = erow.row(align=True)
-            evals.scale_x = 2.0
+            evals.ui_units_x = 10.0
             evals.prop(entry, "engine", text="")
 
             srow = row.row(align=True)
             srow.prop(entry, "samples_enable", text="")
             sval = srow.row(align=True)
             sval.enabled = bool(entry.samples_enable)
+            sval.ui_units_x = 6.0
             sval.prop(entry, "samples", text="サンプル数")
 
             crow = row.row(align=True)
             crow.prop(entry, "camera_enable", text="")
             cam_val = crow.row(align=True)
             cam_val.enabled = bool(entry.camera_enable)
-            cam_val.scale_x = 3.0
+            cam_val.ui_units_x = 18.0
             cam_val.prop(entry, "camera", text="")
 
             wrow = row.row(align=True)
             wrow.prop(entry, "world_enable", text="")
             wval = wrow.row(align=True)
             wval.enabled = bool(entry.world_enable)
-            wval.scale_x = 3.0
+            wval.ui_units_x = 18.0
             wval.prop(entry, "world", text="")
 
             frow = row.row(align=True)
             frow.prop(entry, "format_enable", text="")
             fvals = frow.row(align=True)
             fvals.enabled = bool(entry.format_enable)
+            fvals.ui_units_x = 24.0
             fvals.prop(entry, "resolution_x", text="X")
             fvals.prop(entry, "resolution_y", text="Y")
             fvals.prop(entry, "resolution_percentage", text="スケール")
@@ -603,6 +605,7 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             frrow.prop(entry, "frame_enable", text="")
             frvals = frrow.row(align=True)
             frvals.enabled = bool(entry.frame_enable)
+            frvals.ui_units_x = 14.0
             frvals.prop(entry, "frame_start", text="開始")
             frvals.prop(entry, "frame_end", text="終了")
             frvals.prop(entry, "frame_step", text="ステップ")
