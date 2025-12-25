@@ -792,6 +792,36 @@ class VLM_OT_add_shader_aovs(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class VLM_OT_open_render_output_folder(bpy.types.Operator):
+    """レンダリング出力先のフォルダを開く"""
+    bl_idname = "vlm.open_render_output_folder"
+    bl_label  = "出力フォルダを開く"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        import os
+
+        sc = context.scene
+        raw_path = sc.render.filepath or "//"
+        abs_path = bpy.path.abspath(raw_path)
+
+        folder = abs_path
+        if not os.path.isdir(folder):
+            folder = os.path.dirname(abs_path)
+
+        if not folder or not os.path.exists(folder):
+            self.report({'WARNING'}, f"出力フォルダが見つかりません: {folder}")
+            return {'CANCELLED'}
+
+        try:
+            bpy.ops.wm.path_open(filepath=folder)
+        except Exception as exc:
+            self.report({'ERROR'}, f"フォルダを開けませんでした: {exc}")
+            return {'CANCELLED'}
+
+        return {'FINISHED'}
+
+
 class VLM_PT_panel(bpy.types.Panel):
     bl_label       = "View Layer Manager (Light & Collection)"
     bl_idname      = "VLM_PT_panel"
@@ -1018,6 +1048,10 @@ class VLM_PT_panel(bpy.types.Panel):
                 col.prop(vrs, "frame_step",  text="フレームステップ")
             layout.separator()
 
+        row = layout.row(align=True)
+        row.operator("vlm.open_render_output_folder", icon='FILE_FOLDER')
+        layout.separator()
+
         # 8.5) シェーダーAOV 自動追加
         row = layout.row(align=True)
         row.label(text="シェーダーAOV", icon='NODE_COMPOSITING')
@@ -1129,6 +1163,7 @@ def register():
         VLM_PG_collection_toggle,
         VLM_PG_render_layer_entry,
         VLM_OT_add_shader_aovs,
+        VLM_OT_open_render_output_folder,
         VLM_OT_prepare_output_nodes_plus,
         VLM_OT_duplicate_viewlayers_popup,
         VLM_OT_apply_collection_settings_popup,
@@ -1165,6 +1200,7 @@ def unregister():
         VLM_OT_duplicate_viewlayers_popup,
         VLM_OT_prepare_output_nodes_plus,
         VLM_OT_add_shader_aovs,
+        VLM_OT_open_render_output_folder,
         VLM_PG_render_layer_entry,
         VLM_PG_collection_toggle,
         VLM_PG_collection_multi_state,
