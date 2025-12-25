@@ -3,6 +3,7 @@ import bpy
 from . import (
     light_camera          as lc,
     collection_management as colm,
+    render_override       as ro,
 )
 
 
@@ -16,6 +17,8 @@ STATE_ITEMS = [
     ('ON',   "ON",     "ON にする"),
     ('OFF',  "OFF",    "OFF にする"),
 ]
+
+ENGINE_LABELS = {key: label for key, label, _ in ro.ENGINES}
 
 
 class VLM_PG_collection_multi_state(bpy.types.PropertyGroup):
@@ -33,6 +36,121 @@ class VLM_PG_collection_toggle(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(name="Collection Name")
     enabled: bpy.props.BoolProperty(name="Enabled", default=True)
     level: bpy.props.IntProperty(name="Depth", default=0)
+
+
+class VLM_PG_render_layer_entry(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(name="ViewLayer Name")
+
+    engine_enable: bpy.props.BoolProperty(name="エンジンを上書き", default=False)
+    engine: bpy.props.EnumProperty(name="エンジン", items=ro.ENGINES, default="BLENDER_EEVEE_NEXT")
+
+    samples_enable: bpy.props.BoolProperty(name="サンプル数を上書き", default=False)
+    samples: bpy.props.IntProperty(name="サンプル数", default=64, min=1, max=4096)
+
+    camera_enable: bpy.props.BoolProperty(name="カメラを上書き", default=False)
+    camera: bpy.props.PointerProperty(name="カメラ", type=bpy.types.Object, poll=lambda _self, obj: bool(obj) and obj.type == 'CAMERA')
+
+    world_enable: bpy.props.BoolProperty(name="World を上書き", default=False)
+    world: bpy.props.PointerProperty(name="World", type=bpy.types.World)
+
+    format_enable: bpy.props.BoolProperty(name="フォーマットを上書き", default=False)
+    resolution_x: bpy.props.IntProperty(name="解像度X", default=1920, min=1, max=16384)
+    resolution_y: bpy.props.IntProperty(name="解像度Y", default=1080, min=1, max=16384)
+    resolution_percentage: bpy.props.IntProperty(name="スケール(%)", default=100, min=1, max=1000)
+    aspect_x: bpy.props.FloatProperty(name="アスペクトX", default=1.0, min=0.1)
+    aspect_y: bpy.props.FloatProperty(name="アスペクトY", default=1.0, min=0.1)
+    frame_rate: bpy.props.FloatProperty(name="FPS", default=24.0, min=0.01, max=60000.0, precision=3)
+
+    frame_enable: bpy.props.BoolProperty(name="フレーム範囲を上書き", default=False)
+    frame_start: bpy.props.IntProperty(name="開始フレーム", default=1, min=0)
+    frame_end: bpy.props.IntProperty(name="終了フレーム", default=250, min=0)
+    frame_step: bpy.props.IntProperty(name="フレームステップ", default=1, min=1)
+
+
+def _gather_shader_aovs_from_tree(nt, visited):
+    """ノードツリー内の AOV 出力名とタイプを収集（ノードグループも再帰）"""
+    if nt is None or nt in visited:
+        return {}
+    visited.add(nt)
+
+    found = {}
+    for node in getattr(nt, "nodes", []):
+        # シェーダー AOV 出力
+        if getattr(node, "bl_idname", "") == "ShaderNodeOutputAOV":
+            raw = (getattr(node, "name", "") or "").strip()
+            if not raw:
+                raw = (getattr(node, "label", "") or "").strip()
+            if raw:
+                aov_type = getattr(node, "type", "COLOR") or "COLOR"
+                # 既に同名があれば最初のタイプを優先
+                found.setdefault(raw, aov_type)
+        # ノードグループを再帰的に探索
+        elif getattr(node, "type", "") == 'GROUP':
+            sub_tree = getattr(node, "node_tree", None)
+            if sub_tree:
+                sub = _gather_shader_aovs_from_tree(sub_tree, visited)
+                for k, v in sub.items():
+                    found.setdefault(k, v)
+    return found
+
+
+def _gather_shader_aovs_from_material(mat):
+    """マテリアルに含まれる AOV 出力名を (名前→タイプ) で返す"""
+    if mat is None or not getattr(mat, "use_nodes", False):
+        return {}
+    nt = getattr(mat, "node_tree", None)
+    if nt is None:
+        return {}
+    return _gather_shader_aovs_from_tree(nt, set())
+
+
+def _collect_aov_names_for_view_layer(vl):
+    """ビューレイヤーに表示されているオブジェクトの AOV 名を集計"""
+    if vl is None:
+        return {}
+
+    names = {}
+    objs = getattr(vl, "objects", [])
+    for obj in objs:
+        # ビューレイヤーで可視なオブジェクトのみ対象
+        try:
+            if not obj.visible_get(view_layer=vl):
+                continue
+        except TypeError:
+            if not obj.visible_get():
+                continue
+        for slot in getattr(obj, "material_slots", []):
+            mat = getattr(slot, "material", None)
+            if mat is None:
+                continue
+            for nm, tp in _gather_shader_aovs_from_material(mat).items():
+                names.setdefault(nm, tp)
+    return names
+
+
+def _ensure_view_layer_aovs(vl, aov_map):
+    """ビューレイヤーに指定された AOV 名を追加（既存はスキップ）"""
+    if vl is None or not hasattr(vl, "aovs"):
+        return 0
+    existing = {aov.name for aov in getattr(vl, "aovs", [])}
+    added = 0
+    for nm, tp in aov_map.items():
+        if not nm or nm in existing:
+            continue
+        try:
+            aov = vl.aovs.new()
+        except Exception:
+            aov = vl.aovs.add()
+        aov.name = nm
+        if hasattr(aov, "type"):
+            try:
+                aov.type = tp
+            except Exception:
+                pass
+        existing.add(nm)
+        added += 1
+    return added
+
 
 def _fold(layout, owner, prop_name, title):
     """折りたたみ安全版：プロパティが無い場合でもUIが落ちない"""
@@ -183,6 +301,9 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
     collections: bpy.props.CollectionProperty(type=VLM_PG_collection_toggle)
     rename_from: bpy.props.StringProperty(name="置換元", description="名前の一部を置換する場合に指定")
     rename_to: bpy.props.StringProperty(name="置換先", description="置換後の文字列")
+    name_prefix: bpy.props.StringProperty(name="プレフィックス", description="名前の頭に付ける文字列")
+    name_suffix: bpy.props.StringProperty(name="サフィックス", description="名前の末尾に付ける文字列")
+    custom_name: bpy.props.StringProperty(name="指定名", description="ここに入力するとこの名前を元に複製します")
 
     def _collect_layer_collections(self, root, level=0):
         entry = self.collections.add()
@@ -222,6 +343,10 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
         row = name_box.row(align=True)
         row.prop(self, "rename_from", text="置換元")
         row.prop(self, "rename_to", text="置換先")
+        row = name_box.row(align=True)
+        row.prop(self, "name_prefix", text="プレフィックス")
+        row.prop(self, "name_suffix", text="サフィックス")
+        name_box.prop(self, "custom_name", text="指定名")
         hint = name_box.box()
         hint.label(text="例: glay→bl として複製すると alp_glay_C1 → alp_bl_C1", icon='INFO')
 
@@ -231,6 +356,7 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
         for coll in self.collections:
             row = cbox.row(align=True)
             row.separator(factor=0.4 + 0.2 * coll.level)
+            row.separator(factor=0.8 + 0.4 * coll.level)
             row.prop(coll, "enabled", text="", toggle=True)
             row.label(text=coll.name, icon='OUTLINER_COLLECTION')
 
@@ -249,21 +375,25 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
         states = {c.name: c.enabled for c in self.collections}
         rename_from = (self.rename_from or "").strip()
         rename_to = self.rename_to or ""
+        name_prefix = self.name_prefix or ""
+        name_suffix = self.name_suffix or ""
+        custom_name = (self.custom_name or "").strip()
         created = []
         for name in targets:
             src = sc.view_layers.get(name)
             if not src:
                 continue
-            desired_name = None
-            if rename_from:
-                replaced = name.replace(rename_from, rename_to)
-                desired_name = replaced if replaced else name
+            base = custom_name if custom_name else name
+            if rename_from and not custom_name:
+                replaced = base.replace(rename_from, rename_to)
+                base = replaced if replaced else base
+            base = f"{name_prefix}{base}{name_suffix}"
 
             new_vl = colm.duplicate_view_layer_with_collections(
                 sc,
                 src,
                 collection_states=states,
-                desired_name=desired_name,
+                desired_name=base,
             )
             if new_vl:
                 created.append((name, new_vl.name))
@@ -453,6 +583,245 @@ class VLM_OT_apply_collection_settings_popup(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
+    bl_idname = "vlm.apply_render_settings_popup"
+    bl_label  = "レンダー設定を一括適用"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def invoke(self, context, event):
+        layers = getattr(context.window_manager, "vlm_render_layers", None)
+        if layers is None:
+            self.report({'ERROR'}, "レンダー設定用の一時コレクションが初期化されていません")
+            return {'CANCELLED'}
+
+        layers.clear()
+        sc = context.scene
+
+        for vl in sc.view_layers:
+            rs = getattr(vl, "vlm_render", None)
+            if rs is None:
+                continue
+
+            entry = layers.add()
+            entry.name = vl.name
+
+            entry.engine_enable = bool(getattr(rs, "engine_enable", False))
+            entry.engine = getattr(rs, "engine", entry.engine)
+
+            entry.samples_enable = bool(getattr(rs, "samples_enable", False))
+            entry.samples = getattr(rs, "samples", entry.samples)
+
+            entry.camera_enable = bool(getattr(rs, "camera_enable", False))
+            entry.camera = getattr(rs, "camera", None)
+
+            entry.world_enable = bool(getattr(rs, "world_enable", False))
+            entry.world = getattr(vl, "vlm_world", None) or sc.world
+
+            entry.format_enable = bool(getattr(rs, "format_enable", False))
+            entry.resolution_x = getattr(rs, "resolution_x", sc.render.resolution_x)
+            entry.resolution_y = getattr(rs, "resolution_y", sc.render.resolution_y)
+            entry.resolution_percentage = getattr(rs, "resolution_percentage", sc.render.resolution_percentage)
+            entry.aspect_x = getattr(rs, "aspect_x", sc.render.pixel_aspect_x)
+            entry.aspect_y = getattr(rs, "aspect_y", sc.render.pixel_aspect_y)
+            entry.frame_rate = getattr(rs, "frame_rate", sc.render.fps / sc.render.fps_base)
+
+            entry.frame_enable = bool(getattr(rs, "frame_enable", False))
+            entry.frame_start = getattr(rs, "frame_start", sc.frame_start)
+            entry.frame_end = getattr(rs, "frame_end", sc.frame_end)
+            entry.frame_step = getattr(rs, "frame_step", sc.frame_step)
+
+        return context.window_manager.invoke_props_dialog(self, width=980)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="レンダー設定一覧", icon='RENDER_STILL')
+        box = layout.box()
+
+        layers = getattr(context.window_manager, "vlm_render_layers", None)
+        if layers is None:
+            layout.label(text="(データを初期化できませんでした)", icon='ERROR')
+            return
+
+        for entry in layers:
+            row = box.row(align=True)
+            name_cell = row.row(align=True)
+            name_cell.ui_units_x = 8.0
+            name_cell.label(text=entry.name, icon='RENDERLAYERS')
+
+            erow = row.row(align=True)
+            erow.prop(entry, "engine_enable", text="")
+            evals = erow.row(align=True)
+            evals.ui_units_x = 10.0
+            evals.prop(entry, "engine", text="")
+
+            srow = row.row(align=True)
+            srow.prop(entry, "samples_enable", text="")
+            sval = srow.row(align=True)
+            sval.enabled = bool(entry.samples_enable)
+            sval.ui_units_x = 6.0
+            sval.prop(entry, "samples", text="サンプル数")
+
+            crow = row.row(align=True)
+            crow.prop(entry, "camera_enable", text="")
+            cam_val = crow.row(align=True)
+            cam_val.enabled = bool(entry.camera_enable)
+            cam_val.ui_units_x = 18.0
+            cam_val.prop(entry, "camera", text="")
+
+            wrow = row.row(align=True)
+            wrow.prop(entry, "world_enable", text="")
+            wval = wrow.row(align=True)
+            wval.enabled = bool(entry.world_enable)
+            wval.ui_units_x = 18.0
+            wval.prop(entry, "world", text="")
+
+            frow = row.row(align=True)
+            frow.prop(entry, "format_enable", text="")
+            fvals = frow.row(align=True)
+            fvals.enabled = bool(entry.format_enable)
+            fvals.ui_units_x = 24.0
+            fvals.prop(entry, "resolution_x", text="X")
+            fvals.prop(entry, "resolution_y", text="Y")
+            fvals.prop(entry, "resolution_percentage", text="スケール")
+            fvals.prop(entry, "aspect_x", text="アスペクトX")
+            fvals.prop(entry, "aspect_y", text="アスペクトY")
+            fvals.prop(entry, "frame_rate", text="FPS")
+
+            frrow = row.row(align=True)
+            frrow.prop(entry, "frame_enable", text="")
+            frvals = frrow.row(align=True)
+            frvals.enabled = bool(entry.frame_enable)
+            frvals.ui_units_x = 14.0
+            frvals.prop(entry, "frame_start", text="開始")
+            frvals.prop(entry, "frame_end", text="終了")
+            frvals.prop(entry, "frame_step", text="ステップ")
+
+    def execute(self, context):
+        sc = context.scene
+        applied = []
+        layers = getattr(context.window_manager, "vlm_render_layers", None)
+        if layers is None:
+            self.report({'ERROR'}, "レンダー設定を取得できませんでした")
+            return {'CANCELLED'}
+
+        for entry in layers:
+            vl = sc.view_layers.get(entry.name)
+            if vl is None:
+                continue
+            rs = getattr(vl, "vlm_render", None)
+            if rs is None:
+                continue
+
+            rs.engine_enable = bool(entry.engine_enable)
+            rs.engine = entry.engine
+
+            rs.samples_enable = bool(entry.samples_enable)
+            rs.samples = entry.samples
+
+            rs.camera_enable = bool(entry.camera_enable)
+            rs.camera = entry.camera if entry.camera_enable else rs.camera
+
+            rs.world_enable = bool(entry.world_enable)
+            if entry.world_enable:
+                vl.vlm_world = entry.world
+
+            rs.format_enable = bool(entry.format_enable)
+            rs.resolution_x = entry.resolution_x
+            rs.resolution_y = entry.resolution_y
+            rs.resolution_percentage = entry.resolution_percentage
+            rs.aspect_x = entry.aspect_x
+            rs.aspect_y = entry.aspect_y
+            rs.frame_rate = entry.frame_rate
+
+            rs.frame_enable = bool(entry.frame_enable)
+            rs.frame_start = entry.frame_start
+            rs.frame_end = entry.frame_end
+            rs.frame_step = entry.frame_step
+
+            applied.append(entry.name)
+
+        if not applied:
+            self.report({'WARNING'}, "適用できるビューレイヤーがありません")
+            return {'CANCELLED'}
+
+        try:
+            ro.apply_render_override(sc, context.view_layer)
+        except Exception:
+            pass
+
+        self.report({'INFO'}, f"レンダー設定を適用: {', '.join(applied)}")
+        return {'FINISHED'}
+
+
+class VLM_OT_add_shader_aovs(bpy.types.Operator):
+    """表示中オブジェクトのマテリアルにある AOV 出力をビューレイヤーに追加する"""
+    bl_idname = "vlm.add_shader_aovs"
+    bl_label  = "シェーダーAOVを追加"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    apply_all: bpy.props.BoolProperty(
+        name="全てのビューレイヤーに追加",
+        description="全ビューレイヤーの表示オブジェクトを走査して AOV を追加する",
+        default=False,
+    )
+
+    def execute(self, context):
+        sc = context.scene
+        targets = list(sc.view_layers) if self.apply_all else [context.view_layer] if context.view_layer else []
+        if not targets:
+            self.report({'WARNING'}, "ビューレイヤーが見つかりません")
+            return {'CANCELLED'}
+
+        total_added = 0
+        per_layer = []
+        for vl in targets:
+            aov_map = _collect_aov_names_for_view_layer(vl)
+            if not aov_map:
+                continue
+            added = _ensure_view_layer_aovs(vl, aov_map)
+            if added:
+                total_added += added
+                per_layer.append(f"{vl.name}:{added}")
+
+        if not total_added:
+            self.report({'INFO'}, "追加できる AOV はありませんでした")
+            return {'CANCELLED'}
+
+        detail = ", ".join(per_layer) if per_layer else "なし"
+        self.report({'INFO'}, f"シェーダーAOVを追加しました ({detail})")
+        return {'FINISHED'}
+
+
+class VLM_OT_open_render_output_folder(bpy.types.Operator):
+    """レンダリング出力先のフォルダを開く"""
+    bl_idname = "vlm.open_render_output_folder"
+    bl_label  = "出力フォルダを開く"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        import os
+
+        sc = context.scene
+        raw_path = sc.render.filepath or "//"
+        abs_path = bpy.path.abspath(raw_path)
+
+        folder = abs_path
+        if not os.path.isdir(folder):
+            folder = os.path.dirname(abs_path)
+
+        if not folder or not os.path.exists(folder):
+            self.report({'WARNING'}, f"出力フォルダが見つかりません: {folder}")
+            return {'CANCELLED'}
+
+        try:
+            bpy.ops.wm.path_open(filepath=folder)
+        except Exception as exc:
+            self.report({'ERROR'}, f"フォルダを開けませんでした: {exc}")
+            return {'CANCELLED'}
+
+        return {'FINISHED'}
+
+
 class VLM_PT_panel(bpy.types.Panel):
     bl_label       = "View Layer Manager (Light & Collection)"
     bl_idname      = "VLM_PT_panel"
@@ -493,6 +862,7 @@ class VLM_PT_panel(bpy.types.Panel):
         dup_row = layout.row(align=True)
         dup_row.operator("vlm.duplicate_viewlayers_popup", icon='DUPLICATE')
         dup_row.operator("vlm.apply_collection_settings_popup", icon='MODIFIER_ON')
+        dup_row.operator("vlm.apply_render_settings_popup", icon='RENDER_STILL')
 
         layout.separator()
 
@@ -678,6 +1048,19 @@ class VLM_PT_panel(bpy.types.Panel):
                 col.prop(vrs, "frame_step",  text="フレームステップ")
             layout.separator()
 
+        row = layout.row(align=True)
+        row.operator("vlm.open_render_output_folder", icon='FILE_FOLDER')
+        layout.separator()
+
+        # 8.5) シェーダーAOV 自動追加
+        row = layout.row(align=True)
+        row.label(text="シェーダーAOV", icon='NODE_COMPOSITING')
+        op = row.operator("vlm.add_shader_aovs", text="このビューレイヤーに追加")
+        op.apply_all = False
+        op = row.operator("vlm.add_shader_aovs", text="全ビューレイヤーに追加")
+        op.apply_all = True
+        layout.separator()
+
         # 9) 出力ノード（自動）
         if _fold(layout, sc, "vlm_ui_show_output_nodes", "出力ノード（自動）"):
             if hasattr(bpy.types.Scene, "vlm_enable_ao_multiply"):
@@ -713,7 +1096,7 @@ class VLM_PT_panel(bpy.types.Panel):
             # ── 1行（1段）にまとめる行コンテナ ─────────────────
             row = layout.row(align=True)
             # 階層のインデント
-            row.separator(factor=0.4 + 0.3 * d)
+            row.separator(factor=0.4 + 1 * d)
             # コレクション名
             row.label(text=f"{coll.name}", icon='OUTLINER_COLLECTION')
 
@@ -774,6 +1157,21 @@ class VLM_PT_panel(bpy.types.Panel):
 # register / unregister
 # ──────────────────────────────────────────────
 def register():
+    for cls in (
+        VLM_PG_viewlayer_target,
+        VLM_PG_collection_multi_state,
+        VLM_PG_collection_toggle,
+        VLM_PG_render_layer_entry,
+        VLM_OT_add_shader_aovs,
+        VLM_OT_open_render_output_folder,
+        VLM_OT_prepare_output_nodes_plus,
+        VLM_OT_duplicate_viewlayers_popup,
+        VLM_OT_apply_collection_settings_popup,
+        VLM_OT_apply_render_settings_popup,
+        VLM_PT_panel,
+    ):
+        bpy.utils.register_class(cls)
+
     # Scene プロパティ（チェックボックス）
     bpy.types.Scene.vlm_enable_ao_multiply = bpy.props.BoolProperty(
         name="AO乗算を追加",
@@ -781,16 +1179,10 @@ def register():
         default=False
     )
 
-    for cls in (
-        VLM_PG_viewlayer_target,
-        VLM_PG_collection_multi_state,
-        VLM_PG_collection_toggle,
-        VLM_OT_prepare_output_nodes_plus,
-        VLM_OT_duplicate_viewlayers_popup,
-        VLM_OT_apply_collection_settings_popup,
-        VLM_PT_panel,
-    ):
-        bpy.utils.register_class(cls)
+    # WindowManager プロパティ（レンダー設定一括適用用の一時コレクション）
+    bpy.types.WindowManager.vlm_render_layers = bpy.props.CollectionProperty(
+        type=VLM_PG_render_layer_entry,
+    )
     
     if not hasattr(bpy.types.Scene, "vlm_ui_show_world"):
         bpy.types.Scene.vlm_ui_show_world = bpy.props.BoolProperty(
@@ -798,11 +1190,18 @@ def register():
         )
         
 def unregister():
+    if hasattr(bpy.types.WindowManager, "vlm_render_layers"):
+        del bpy.types.WindowManager.vlm_render_layers
+
     for cls in (
         VLM_PT_panel,
+        VLM_OT_apply_render_settings_popup,
         VLM_OT_apply_collection_settings_popup,
         VLM_OT_duplicate_viewlayers_popup,
         VLM_OT_prepare_output_nodes_plus,
+        VLM_OT_add_shader_aovs,
+        VLM_OT_open_render_output_folder,
+        VLM_PG_render_layer_entry,
         VLM_PG_collection_toggle,
         VLM_PG_collection_multi_state,
         VLM_PG_viewlayer_target,
