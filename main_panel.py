@@ -77,7 +77,9 @@ def _gather_shader_aovs_from_tree(nt, visited):
     for node in getattr(nt, "nodes", []):
         # シェーダー AOV 出力
         if getattr(node, "bl_idname", "") == "ShaderNodeOutputAOV":
-            raw = (getattr(node, "name", "") or "").strip()
+            raw = (getattr(node, "aov_name", "") or "").strip()
+            if not raw:
+                raw = (getattr(node, "name", "") or "").strip()
             if not raw:
                 raw = (getattr(node, "label", "") or "").strip()
             if raw:
