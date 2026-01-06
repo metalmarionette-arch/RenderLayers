@@ -73,17 +73,58 @@ def _gather_shader_aovs_from_tree(nt, visited):
         return {}
     visited.add(nt)
 
+    def _get_shader_aov_output_name(node):
+        """
+        ShaderNodeOutputAOV から「AOV名」をできるだけ確実に取得する。
+        Blenderのバージョン差で識別子が変わっても拾えるように、RNAから探索する。
+        """
+        for attr in ("aov_name", "aov", "aov_output_name", "aov_pass_name"):
+            if hasattr(node, attr):
+                val = (getattr(node, attr, "") or "").strip()
+                if val:
+                    return val
+
+        try:
+            rna_props = getattr(node, "bl_rna", None).properties
+        except Exception:
+            rna_props = None
+
+        if rna_props:
+            candidates = []
+            for prop in rna_props:
+                try:
+                    pid = (prop.identifier or "").lower()
+                    ptype = getattr(prop, "type", "")
+                except Exception:
+                    continue
+
+                if ptype != 'STRING':
+                    continue
+                if "aov" in pid and "name" in pid:
+                    candidates.append(prop.identifier)
+
+            for pid in sorted(set(candidates)):
+                try:
+                    val = (getattr(node, pid, "") or "").strip()
+                except Exception:
+                    continue
+                if val:
+                    return val
+
+        raw = (getattr(node, "name", "") or "").strip()
+        if raw.startswith("Shader AOV Output "):
+            raw = raw.replace("Shader AOV Output ", "", 1).strip()
+        if raw:
+            return raw
+
+        raw = (getattr(node, "label", "") or "").strip()
+        return raw or ""
+
     found = {}
     for node in getattr(nt, "nodes", []):
         # シェーダー AOV 出力
         if getattr(node, "bl_idname", "") == "ShaderNodeOutputAOV":
-            raw = (getattr(node, "aov_name", "") or "").strip()
-            if not raw:
-                raw = (getattr(node, "name", "") or "").strip()
-                if raw.startswith("Shader AOV Output "):
-                    raw = raw.replace("Shader AOV Output ", "", 1).strip()
-            if not raw:
-                raw = (getattr(node, "label", "") or "").strip()
+            raw = _get_shader_aov_output_name(node)
             if raw:
                 aov_type = getattr(node, "type", "COLOR") or "COLOR"
                 # 既に同名があれば最初のタイプを優先
