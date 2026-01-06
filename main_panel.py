@@ -73,13 +73,58 @@ def _gather_shader_aovs_from_tree(nt, visited):
         return {}
     visited.add(nt)
 
+    def _get_shader_aov_output_name(node):
+        """
+        ShaderNodeOutputAOV から「AOV名」をできるだけ確実に取得する。
+        Blenderのバージョン差で識別子が変わっても拾えるように、RNAから探索する。
+        """
+        for attr in ("aov_name", "aov", "aov_output_name", "aov_pass_name"):
+            if hasattr(node, attr):
+                val = (getattr(node, attr, "") or "").strip()
+                if val:
+                    return val
+
+        try:
+            rna_props = getattr(node, "bl_rna", None).properties
+        except Exception:
+            rna_props = None
+
+        if rna_props:
+            candidates = []
+            for prop in rna_props:
+                try:
+                    pid = (prop.identifier or "").lower()
+                    ptype = getattr(prop, "type", "")
+                except Exception:
+                    continue
+
+                if ptype != 'STRING':
+                    continue
+                if "aov" in pid and "name" in pid:
+                    candidates.append(prop.identifier)
+
+            for pid in sorted(set(candidates)):
+                try:
+                    val = (getattr(node, pid, "") or "").strip()
+                except Exception:
+                    continue
+                if val:
+                    return val
+
+        raw = (getattr(node, "name", "") or "").strip()
+        if raw.startswith("Shader AOV Output "):
+            raw = raw.replace("Shader AOV Output ", "", 1).strip()
+        if raw:
+            return raw
+
+        raw = (getattr(node, "label", "") or "").strip()
+        return raw or ""
+
     found = {}
     for node in getattr(nt, "nodes", []):
         # シェーダー AOV 出力
         if getattr(node, "bl_idname", "") == "ShaderNodeOutputAOV":
-            raw = (getattr(node, "name", "") or "").strip()
-            if not raw:
-                raw = (getattr(node, "label", "") or "").strip()
+            raw = _get_shader_aov_output_name(node)
             if raw:
                 aov_type = getattr(node, "type", "COLOR") or "COLOR"
                 # 既に同名があれば最初のタイプを優先
@@ -928,6 +973,65 @@ class VLM_PT_panel(bpy.types.Panel):
             if vlayers and context.view_layer.name == vlayers[0].name:
                 hint = box.box()
                 hint.label(text="先頭レイヤーのサンプル数は、他レイヤーのフォールバック値として使われます。", icon='INFO')
+
+            layout.separator()
+
+        # ─────────────────────────────────────────
+        # ④ Cycles ライトパス
+        # ─────────────────────────────────────────
+        if _fold(layout, sc, "vlm_ui_show_cycles_light_paths", "Cycles ライトパス"):
+            vrs = getattr(context.view_layer, "vlm_render", None)
+            if vrs is None:
+                layout.label(text="(vlm_render が未登録です)", icon='ERROR')
+            else:
+                row = layout.row(align=True)
+                row.enabled = not is_top_layer
+                row.prop(vrs, "light_paths_enable", text="このレイヤーの設定を使用")
+
+                col = layout.column(align=True)
+                col.enabled = (is_top_layer or bool(getattr(vrs, "light_paths_enable", False)))
+
+                if getattr(vrs, "engine", "") != "CYCLES":
+                    warn = col.box()
+                    warn.label(text="Cycles 選択時のみ有効です", icon='INFO')
+
+                max_box = col.box()
+                max_box.label(text="最大バウンス数")
+                max_box.prop(vrs, "light_path_max_bounces", text="合計")
+                max_box.prop(vrs, "light_path_diffuse_bounces", text="ディフューズ")
+                max_box.prop(vrs, "light_path_glossy_bounces", text="光沢")
+                max_box.prop(vrs, "light_path_transmission_bounces", text="伝播")
+                max_box.prop(vrs, "light_path_volume_bounces", text="ボリューム")
+                max_box.prop(vrs, "light_path_transparent_bounces", text="透過")
+
+                clamp_box = col.box()
+                clamp_box.label(text="制限")
+                clamp_box.prop(vrs, "light_path_clamp_direct", text="直接照明")
+                clamp_box.prop(vrs, "light_path_clamp_indirect", text="間接照明")
+
+                caustics_box = col.box()
+                caustics_box.label(text="コースティクス")
+                caustics_box.prop(vrs, "light_path_filter_glossy", text="光沢フィルター")
+                caustics_row = caustics_box.row(align=True)
+                caustics_row.prop(vrs, "light_path_caustics_reflective", text="反射")
+                caustics_row.prop(vrs, "light_path_caustics_refractive", text="屈折")
+
+                fast_gi_box = col.box()
+                fast_gi_head = fast_gi_box.row(align=True)
+                fast_gi_head.prop(vrs, "fast_gi_use", text="高速 GI 近似")
+                fast_gi_toggle = fast_gi_head.row(align=True)
+                fast_gi_toggle.enabled = not is_top_layer
+                fast_gi_toggle.prop(vrs, "fast_gi_enable", text="このレイヤーの設定を使用")
+
+                fast_gi_body = fast_gi_box.column(align=True)
+                fast_gi_body.enabled = bool(getattr(vrs, "fast_gi_use", False)) and (
+                    is_top_layer or bool(getattr(vrs, "fast_gi_enable", False))
+                )
+                fast_gi_body.prop(vrs, "fast_gi_method", text="方式")
+                fast_gi_body.prop(vrs, "fast_gi_ao_factor", text="AOの係数")
+                fast_gi_body.prop(vrs, "fast_gi_ao_distance", text="AOの距離")
+                fast_gi_body.prop(vrs, "fast_gi_viewport_bounces", text="ビューポートバウンス")
+                fast_gi_body.prop(vrs, "fast_gi_render_bounces", text="レンダーバウンス数")
 
             layout.separator()
 
