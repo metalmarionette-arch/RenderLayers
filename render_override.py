@@ -60,6 +60,15 @@ LIGHT_PATH_PROP_MAP = [
     ("light_path_caustics_refractive", "caustics_refractive"),
 ]
 
+FAST_GI_PROP_MAP = [
+    ("fast_gi_use", "use_fast_gi"),
+    ("fast_gi_method", "fast_gi_method"),
+    ("fast_gi_ao_factor", "fast_gi_ao_factor"),
+    ("fast_gi_ao_distance", "fast_gi_ao_distance"),
+    ("fast_gi_viewport_bounces", "fast_gi_viewport_bounces"),
+    ("fast_gi_render_bounces", "fast_gi_render_bounces"),
+]
+
 def _sync_cycles_light_paths(rs, cycles_settings) -> None:
     if rs is None or cycles_settings is None:
         return
@@ -70,10 +79,30 @@ def _sync_cycles_light_paths(rs, cycles_settings) -> None:
             except Exception:
                 pass
 
+def _sync_cycles_fast_gi(rs, cycles_settings) -> None:
+    if rs is None or cycles_settings is None:
+        return
+    for rs_prop, cycles_prop in FAST_GI_PROP_MAP:
+        if hasattr(rs, rs_prop) and hasattr(cycles_settings, cycles_prop):
+            try:
+                setattr(rs, rs_prop, getattr(cycles_settings, cycles_prop))
+            except Exception:
+                pass
+
 def _apply_cycles_light_paths(rs, cycles_settings) -> None:
     if rs is None or cycles_settings is None:
         return
     for rs_prop, cycles_prop in LIGHT_PATH_PROP_MAP:
+        if hasattr(rs, rs_prop) and hasattr(cycles_settings, cycles_prop):
+            try:
+                setattr(cycles_settings, cycles_prop, getattr(rs, rs_prop))
+            except Exception:
+                pass
+
+def _apply_cycles_fast_gi(rs, cycles_settings) -> None:
+    if rs is None or cycles_settings is None:
+        return
+    for rs_prop, cycles_prop in FAST_GI_PROP_MAP:
         if hasattr(rs, rs_prop) and hasattr(cycles_settings, cycles_prop):
             try:
                 setattr(cycles_settings, cycles_prop, getattr(rs, rs_prop))
@@ -197,6 +226,48 @@ class VLM_RenderSettings(PropertyGroup):
         update=_update_render_settings
     )
 
+    # Cycles 高速GI近似
+    fast_gi_enable: BoolProperty(
+        name="Fast GI Override",
+        description="このレイヤーの Cycles 高速GI近似設定を使用する",
+        default=False,
+        update=_update_render_settings
+    )
+    fast_gi_use: BoolProperty(
+        name="Use Fast GI",
+        default=False,
+        update=_update_render_settings
+    )
+    fast_gi_method: EnumProperty(
+        name="Fast GI Method",
+        items=[
+            ("REPLACE", "置き換え", ""),
+            ("ADD", "追加", ""),
+        ],
+        default="REPLACE",
+        update=_update_render_settings
+    )
+    fast_gi_ao_factor: FloatProperty(
+        name="AO Factor",
+        default=1.0, min=0.0,
+        update=_update_render_settings
+    )
+    fast_gi_ao_distance: FloatProperty(
+        name="AO Distance",
+        default=10.0, min=0.0,
+        update=_update_render_settings
+    )
+    fast_gi_viewport_bounces: IntProperty(
+        name="Viewport Bounces",
+        default=1, min=0, max=1024,
+        update=_update_render_settings
+    )
+    fast_gi_render_bounces: IntProperty(
+        name="Render Bounces",
+        default=1, min=0, max=1024,
+        update=_update_render_settings
+    )
+
     # Cycles用デノイズ
     use_denoise: BoolProperty(
         name="Denoise",
@@ -273,6 +344,7 @@ def sync_scene_settings_to_addon(scene):
             rs.samples     = scene.cycles.samples
             rs.use_denoise = scene.cycles.use_denoising
             _sync_cycles_light_paths(rs, scene.cycles)
+            _sync_cycles_fast_gi(rs, scene.cycles)
         elif rs.engine == 'BLENDER_EEVEE_NEXT' and hasattr(scene, 'eevee'):
             rs.samples = scene.eevee.taa_render_samples
         
@@ -308,6 +380,7 @@ def sync_scene_settings_to_addon(scene):
         top_rs.frame_enable  = True
         top_rs.world_enable  = True  # ← World も基準ON
         top_rs.light_paths_enable = True
+        top_rs.fast_gi_enable = True
 
         # Worldの初期化（未設定なら Scene.world を基準に）
         if not getattr(top_vl, "vlm_world", None) and scene.world:
@@ -402,6 +475,8 @@ def apply_render_override(scene: bpy.types.Scene,
         scene.cycles.use_denoising = bool(getattr(eng_src, "use_denoise", False))
         light_src = rs if (view_layer == top_vl or getattr(rs, "light_paths_enable", False)) else top_rs
         _apply_cycles_light_paths(light_src, scene.cycles)
+        fast_gi_src = rs if (view_layer == top_vl or getattr(rs, "fast_gi_enable", False)) else top_rs
+        _apply_cycles_fast_gi(fast_gi_src, scene.cycles)
 
     elif r.engine in {'BLENDER_EEVEE_NEXT'}:
         if samples_val is not None:

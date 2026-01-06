@@ -971,6 +971,23 @@ class VLM_PT_panel(bpy.types.Panel):
                 caustics_row.prop(vrs, "light_path_caustics_reflective", text="反射")
                 caustics_row.prop(vrs, "light_path_caustics_refractive", text="屈折")
 
+                fast_gi_box = col.box()
+                fast_gi_head = fast_gi_box.row(align=True)
+                fast_gi_head.prop(vrs, "fast_gi_use", text="高速 GI 近似")
+                fast_gi_toggle = fast_gi_head.row(align=True)
+                fast_gi_toggle.enabled = not is_top_layer
+                fast_gi_toggle.prop(vrs, "fast_gi_enable", text="このレイヤーの設定を使用")
+
+                fast_gi_body = fast_gi_box.column(align=True)
+                fast_gi_body.enabled = bool(getattr(vrs, "fast_gi_use", False)) and (
+                    is_top_layer or bool(getattr(vrs, "fast_gi_enable", False))
+                )
+                fast_gi_body.prop(vrs, "fast_gi_method", text="方式")
+                fast_gi_body.prop(vrs, "fast_gi_ao_factor", text="AOの係数")
+                fast_gi_body.prop(vrs, "fast_gi_ao_distance", text="AOの距離")
+                fast_gi_body.prop(vrs, "fast_gi_viewport_bounces", text="ビューポートバウンス")
+                fast_gi_body.prop(vrs, "fast_gi_render_bounces", text="レンダーバウンス数")
+
             layout.separator()
 
         # 以降は既存のまま（カメラ／ライト／World／フォーマット／フレーム範囲／出力ノード／レンダー出力）
