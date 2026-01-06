@@ -79,11 +79,11 @@ def _gather_shader_aovs_from_tree(nt, visited):
         if getattr(node, "bl_idname", "") == "ShaderNodeOutputAOV":
             raw = (getattr(node, "aov_name", "") or "").strip()
             if not raw:
-                raw = (getattr(node, "label", "") or "").strip()
-            if not raw:
                 raw = (getattr(node, "name", "") or "").strip()
                 if raw.startswith("Shader AOV Output "):
                     raw = raw.replace("Shader AOV Output ", "", 1).strip()
+            if not raw:
+                raw = (getattr(node, "label", "") or "").strip()
             if raw:
                 aov_type = getattr(node, "type", "COLOR") or "COLOR"
                 # 既に同名があれば最初のタイプを優先
