@@ -46,6 +46,40 @@ def _sanitize_engine_values(scene: bpy.types.Scene) -> None:
             if fixed != getattr(vrs, "engine", ""):
                 vrs.engine = fixed
 
+LIGHT_PATH_PROP_MAP = [
+    ("light_path_max_bounces", "max_bounces"),
+    ("light_path_diffuse_bounces", "diffuse_bounces"),
+    ("light_path_glossy_bounces", "glossy_bounces"),
+    ("light_path_transmission_bounces", "transmission_bounces"),
+    ("light_path_volume_bounces", "volume_bounces"),
+    ("light_path_transparent_bounces", "transparent_max_bounces"),
+    ("light_path_clamp_direct", "sample_clamp_direct"),
+    ("light_path_clamp_indirect", "sample_clamp_indirect"),
+    ("light_path_filter_glossy", "filter_glossy"),
+    ("light_path_caustics_reflective", "caustics_reflective"),
+    ("light_path_caustics_refractive", "caustics_refractive"),
+]
+
+def _sync_cycles_light_paths(rs, cycles_settings) -> None:
+    if rs is None or cycles_settings is None:
+        return
+    for rs_prop, cycles_prop in LIGHT_PATH_PROP_MAP:
+        if hasattr(rs, rs_prop) and hasattr(cycles_settings, cycles_prop):
+            try:
+                setattr(rs, rs_prop, getattr(cycles_settings, cycles_prop))
+            except Exception:
+                pass
+
+def _apply_cycles_light_paths(rs, cycles_settings) -> None:
+    if rs is None or cycles_settings is None:
+        return
+    for rs_prop, cycles_prop in LIGHT_PATH_PROP_MAP:
+        if hasattr(rs, rs_prop) and hasattr(cycles_settings, cycles_prop):
+            try:
+                setattr(cycles_settings, cycles_prop, getattr(rs, rs_prop))
+            except Exception:
+                pass
+
 def _update_render_settings(self, context):
     pass
 def _camera_poll(self, obj):
@@ -96,6 +130,70 @@ class VLM_RenderSettings(PropertyGroup):
         name="Samples",
         description="Cycles/Eeveeのサンプル数（1-4096）",
         default=64, min=1, max=4096,
+        update=_update_render_settings
+    )
+
+    # Cycles ライトパス上書き
+    light_paths_enable: BoolProperty(
+        name="Light Paths Override",
+        description="このレイヤーの Cycles ライトパス設定を使用する",
+        default=False,
+        update=_update_render_settings
+    )
+
+    light_path_max_bounces: IntProperty(
+        name="Max Bounces",
+        default=12, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_diffuse_bounces: IntProperty(
+        name="Diffuse Bounces",
+        default=4, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_glossy_bounces: IntProperty(
+        name="Glossy Bounces",
+        default=4, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_transmission_bounces: IntProperty(
+        name="Transmission Bounces",
+        default=12, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_volume_bounces: IntProperty(
+        name="Volume Bounces",
+        default=0, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_transparent_bounces: IntProperty(
+        name="Transparent Bounces",
+        default=8, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_clamp_direct: FloatProperty(
+        name="Clamp Direct",
+        default=0.0, min=0.0,
+        update=_update_render_settings
+    )
+    light_path_clamp_indirect: FloatProperty(
+        name="Clamp Indirect",
+        default=10.0, min=0.0,
+        update=_update_render_settings
+    )
+    light_path_filter_glossy: FloatProperty(
+        name="Filter Glossy",
+        default=1.0, min=0.0,
+        update=_update_render_settings
+    )
+    light_path_caustics_reflective: BoolProperty(
+        name="Caustics Reflective",
+        default=True,
+        update=_update_render_settings
+    )
+    light_path_caustics_refractive: BoolProperty(
+        name="Caustics Refractive",
+        default=True,
         update=_update_render_settings
     )
 
@@ -174,6 +272,7 @@ def sync_scene_settings_to_addon(scene):
         if rs.engine == 'CYCLES' and hasattr(scene, 'cycles'):
             rs.samples     = scene.cycles.samples
             rs.use_denoise = scene.cycles.use_denoising
+            _sync_cycles_light_paths(rs, scene.cycles)
         elif rs.engine == 'BLENDER_EEVEE_NEXT' and hasattr(scene, 'eevee'):
             rs.samples = scene.eevee.taa_render_samples
         
@@ -208,6 +307,7 @@ def sync_scene_settings_to_addon(scene):
         top_rs.format_enable = True
         top_rs.frame_enable  = True
         top_rs.world_enable  = True  # ← World も基準ON
+        top_rs.light_paths_enable = True
 
         # Worldの初期化（未設定なら Scene.world を基準に）
         if not getattr(top_vl, "vlm_world", None) and scene.world:
@@ -300,6 +400,8 @@ def apply_render_override(scene: bpy.types.Scene,
             scene.cycles.samples = samples_val
         # デノイズはエンジン選択元に追随（UIから削除していても内部値は尊重）
         scene.cycles.use_denoising = bool(getattr(eng_src, "use_denoise", False))
+        light_src = rs if (view_layer == top_vl or getattr(rs, "light_paths_enable", False)) else top_rs
+        _apply_cycles_light_paths(light_src, scene.cycles)
 
     elif r.engine in {'BLENDER_EEVEE_NEXT'}:
         if samples_val is not None:

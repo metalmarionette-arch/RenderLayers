@@ -931,6 +931,48 @@ class VLM_PT_panel(bpy.types.Panel):
 
             layout.separator()
 
+        # ─────────────────────────────────────────
+        # ④ Cycles ライトパス
+        # ─────────────────────────────────────────
+        if _fold(layout, sc, "vlm_ui_show_cycles_light_paths", "Cycles ライトパス"):
+            vrs = getattr(context.view_layer, "vlm_render", None)
+            if vrs is None:
+                layout.label(text="(vlm_render が未登録です)", icon='ERROR')
+            else:
+                row = layout.row(align=True)
+                row.enabled = not is_top_layer
+                row.prop(vrs, "light_paths_enable", text="このレイヤーの設定を使用")
+
+                col = layout.column(align=True)
+                col.enabled = (is_top_layer or bool(getattr(vrs, "light_paths_enable", False)))
+
+                if getattr(vrs, "engine", "") != "CYCLES":
+                    warn = col.box()
+                    warn.label(text="Cycles 選択時のみ有効です", icon='INFO')
+
+                max_box = col.box()
+                max_box.label(text="最大バウンス数")
+                max_box.prop(vrs, "light_path_max_bounces", text="合計")
+                max_box.prop(vrs, "light_path_diffuse_bounces", text="ディフューズ")
+                max_box.prop(vrs, "light_path_glossy_bounces", text="光沢")
+                max_box.prop(vrs, "light_path_transmission_bounces", text="伝播")
+                max_box.prop(vrs, "light_path_volume_bounces", text="ボリューム")
+                max_box.prop(vrs, "light_path_transparent_bounces", text="透過")
+
+                clamp_box = col.box()
+                clamp_box.label(text="制限")
+                clamp_box.prop(vrs, "light_path_clamp_direct", text="直接照明")
+                clamp_box.prop(vrs, "light_path_clamp_indirect", text="間接照明")
+
+                caustics_box = col.box()
+                caustics_box.label(text="コースティクス")
+                caustics_box.prop(vrs, "light_path_filter_glossy", text="光沢フィルター")
+                caustics_row = caustics_box.row(align=True)
+                caustics_row.prop(vrs, "light_path_caustics_reflective", text="反射")
+                caustics_row.prop(vrs, "light_path_caustics_refractive", text="屈折")
+
+            layout.separator()
+
         # 以降は既存のまま（カメラ／ライト／World／フォーマット／フレーム範囲／出力ノード／レンダー出力）
         # 5) カメラ
         if _fold(layout, sc, "vlm_ui_show_camera", "カメラ"):
