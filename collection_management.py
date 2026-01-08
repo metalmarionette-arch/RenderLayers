@@ -10,6 +10,7 @@ import gc
 from . import light_camera
 from .material_override import apply_active_viewlayer_overrides
 from .render_override import apply_render_override
+from .viewlayer_operations import _ensure_header_visible
 
 # collection_management.py の import 群の下あたりに追加
 def _get_top_rs(scene):
@@ -115,6 +116,31 @@ def _selected_viewlayers(scene):
         if not vls:
             vls = list(scene.view_layers)
     return vls
+
+
+# --------------------------------------------------
+# レンダー進捗表示用のヘルパ
+# --------------------------------------------------
+def _planned_steps_for_layer(scene: bpy.types.Scene, vl: bpy.types.ViewLayer, use_animation: bool) -> int:
+    if use_animation:
+        s, e, st = _resolve_frame_range(scene, vl)
+        return ((e - s) // st) + 1
+    return 1
+
+
+def _report_render_progress(op, context, total_planned: int, layer_name: str,
+                            layer_planned: int, layer_done: int, overall_done: int) -> None:
+    pct = (overall_done / total_planned * 100.0) if total_planned else 0.0
+    msg = (
+        f"全VL予定: {total_planned}枚 / "
+        f"{layer_name}: {layer_planned}枚予定 / "
+        f"現在: {layer_done}枚目 / 全体進捗: {pct:.1f}%"
+    )
+    try:
+        _ensure_header_visible(context.window.screen)
+    except Exception:
+        pass
+    op.report({'INFO'}, msg)
 
 
 # =========================================================
@@ -1081,6 +1107,9 @@ class VLM_OT_render_active_viewlayer(bpy.types.Operator):
         orig_frame  = sc.frame_current
         orig_world  = sc.world
 
+        total_planned = _planned_steps_for_layer(sc, win.view_layer, self.use_animation)
+        overall_done = 0
+
         try:
             # アクティブのみON
             target_vl = None
@@ -1100,6 +1129,9 @@ class VLM_OT_render_active_viewlayer(bpy.types.Operator):
                 sc.frame_set(sc.frame_current)
                 _prepare_compositor_nodes(sc)
                 _update_dynamic_paths_and_apply_ao(sc)
+                _report_render_progress(
+                    self, context, total_planned, vl.name, total_planned, 1, overall_done + 1
+                )
                 bpy.ops.render.render(write_still=True, use_viewport=False)
                 _vlm_purge(sc); _free_render_images_and_viewers(); _defer_strong_purge(sc, delay=0.1)
             else:
@@ -1130,6 +1162,10 @@ class VLM_OT_render_active_viewlayer(bpy.types.Operator):
                     _vlm_purge(sc); _free_render_images_and_viewers(); _defer_strong_purge(sc, delay=0.1)
 
                     done += 1
+                    overall_done = done
+                    _report_render_progress(
+                        self, context, total_planned, vl.name, total, done, overall_done
+                    )
                     context.window_manager.progress_update(done)
                     f += step
 
@@ -1175,13 +1211,12 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
         self._skipped_frames = 0
 
         # 総ステップを“各VLの実際に使うレンジ”で計算
-        if self.use_animation:
-            self._total_steps = 0
-            for vl in self._vl_list:
-                s, e, st = _resolve_frame_range(sc, vl)
-                self._total_steps += ((e - s) // st) + 1
-        else:
-            self._total_steps = len(self._vl_list)
+        self._per_layer_plan = {
+            vl.name: _planned_steps_for_layer(sc, vl, self.use_animation)
+            for vl in self._vl_list
+        }
+        self._per_layer_done = {vl.name: 0 for vl in self._vl_list}
+        self._total_steps = sum(self._per_layer_plan.values())
 
         self._vl_index = 0
         # ★ 初期フレームを“最初のVLの解決レンジstart”にセット
@@ -1258,7 +1293,17 @@ class VLM_OT_render_all_viewlayers(bpy.types.Operator):
 
         # 進捗
         self._done_steps += 1
+        self._per_layer_done[vl.name] = self._per_layer_done.get(vl.name, 0) + 1
         wm.progress_update(self._done_steps)
+        _report_render_progress(
+            self,
+            context,
+            self._total_steps,
+            vl.name,
+            self._per_layer_plan.get(vl.name, 1),
+            self._per_layer_done.get(vl.name, 0),
+            self._done_steps,
+        )
 
         if not self.use_animation:
             # 静止画：次のVLへ。次VLでstartにリセットする
