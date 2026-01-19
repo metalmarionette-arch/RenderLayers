@@ -781,7 +781,7 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             entry.frame_end = getattr(rs, "frame_end", sc.frame_end)
             entry.frame_step = getattr(rs, "frame_step", sc.frame_step)
 
-        return context.window_manager.invoke_props_dialog(self, width=980)
+        return context.window_manager.invoke_props_dialog(self, width=1960)
 
     def draw(self, context):
         layout = self.layout
