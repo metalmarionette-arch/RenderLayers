@@ -466,7 +466,6 @@ class VLM_OT_create_viewlayers_from_collections_popup(bpy.types.Operator):
     bl_label = "コレクションからビューレイヤー作成"
     bl_options = {'REGISTER', 'UNDO'}
 
-    collections: bpy.props.CollectionProperty(type=VLM_PG_collection_build)
     name_prefix: bpy.props.StringProperty(name="プレフィックス", description="名前の頭に付ける文字列")
     name_suffix: bpy.props.StringProperty(name="サフィックス", description="名前の末尾に付ける文字列")
 
@@ -476,7 +475,8 @@ class VLM_OT_create_viewlayers_from_collections_popup(bpy.types.Operator):
                 self._collect_layer_collections(child, level)
             return
 
-        entry = self.collections.add()
+        items = bpy.context.window_manager.vlm_collection_build_items
+        entry = items.add()
         entry.name = lc.collection.name
         entry.level = level
 
@@ -484,7 +484,8 @@ class VLM_OT_create_viewlayers_from_collections_popup(bpy.types.Operator):
             self._collect_layer_collections(child, level + 1)
 
     def invoke(self, context, event):
-        self.collections.clear()
+        items = context.window_manager.vlm_collection_build_items
+        items.clear()
 
         if context.view_layer:
             self._collect_layer_collections(context.view_layer.layer_collection, 0)
@@ -501,7 +502,7 @@ class VLM_OT_create_viewlayers_from_collections_popup(bpy.types.Operator):
         header.label(text="コレクション名")
 
         cbox = layout.box()
-        for coll in self.collections:
+        for coll in context.window_manager.vlm_collection_build_items:
             row = cbox.row(align=True)
             row.prop(coll, "create_layer", text="")
             row.prop(coll, "force_on", text="")
@@ -525,19 +526,20 @@ class VLM_OT_create_viewlayers_from_collections_popup(bpy.types.Operator):
             self.report({'WARNING'}, "アクティブなビューレイヤーがありません")
             return {'CANCELLED'}
 
-        targets = [c for c in self.collections if c.create_layer]
+        items = context.window_manager.vlm_collection_build_items
+        targets = [c for c in items if c.create_layer]
         if not targets:
             self.report({'WARNING'}, "作成対象のコレクションを選択してください")
             return {'CANCELLED'}
 
-        force_on = {c.name for c in self.collections if c.force_on}
+        force_on = {c.name for c in items if c.force_on}
         name_prefix = self.name_prefix or ""
         name_suffix = self.name_suffix or ""
 
         created = []
         for target in targets:
             states = {}
-            for coll in self.collections:
+            for coll in items:
                 include = (coll.name == target.name) or (coll.name in force_on)
                 states[coll.name] = include
 
@@ -1377,6 +1379,11 @@ def register():
         "vlm_render_layers",
         bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry),
     )
+    _safe_prop(
+        bpy.types.WindowManager,
+        "vlm_collection_build_items",
+        bpy.props.CollectionProperty(type=VLM_PG_collection_build),
+    )
     
     if not hasattr(bpy.types.Scene, "vlm_ui_show_world"):
         bpy.types.Scene.vlm_ui_show_world = bpy.props.BoolProperty(
@@ -1386,6 +1393,8 @@ def register():
 def unregister():
     if hasattr(bpy.types.WindowManager, "vlm_render_layers"):
         del bpy.types.WindowManager.vlm_render_layers
+    if hasattr(bpy.types.WindowManager, "vlm_collection_build_items"):
+        del bpy.types.WindowManager.vlm_collection_build_items
 
     def _safe_unregister_class(cls):
         try:
