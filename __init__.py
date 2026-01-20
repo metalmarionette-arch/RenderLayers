@@ -10,20 +10,35 @@ bl_info = {
     "category":    "Render",
 }
 
+import importlib
 import bpy
 from bpy.props import (
     StringProperty, BoolProperty, IntProperty, FloatProperty, EnumProperty
 )
 
-# ▼ ここで一度だけモジュールを import（register/unregister 内で再importしない）
-from . import (
-    render_override,
-    main_panel,
-    collection_management,
-    material_override,
-    light_camera,
-    viewlayer_operations,
+MODULE_NAMES = (
+    "render_override",
+    "main_panel",
+    "collection_management",
+    "material_override",
+    "light_camera",
+    "viewlayer_operations",
 )
+
+_modules = {}
+
+def _load_modules():
+    global _modules
+    if _modules:
+        return _modules
+    loaded = {}
+    for name in MODULE_NAMES:
+        try:
+            loaded[name] = importlib.import_module(f"{__name__}.{name}")
+        except Exception:
+            loaded[name] = None
+    _modules = loaded
+    return _modules
 
 # ----------------------------------------------------------------
 # register / unregister
@@ -121,12 +136,11 @@ def register():
 
 
     # --- モジュール登録（トップの import を利用） ---
-    _safe_module_register(render_override.register)
-    _safe_module_register(main_panel.register)
-    _safe_module_register(collection_management.register)
-    _safe_module_register(material_override.register)
-    _safe_module_register(light_camera.register)
-    _safe_module_register(viewlayer_operations.register)
+    modules = _load_modules()
+    for name in MODULE_NAMES:
+        module = modules.get(name)
+        if module and hasattr(module, "register"):
+            _safe_module_register(module.register)
 
 def unregister():
     # --- 実行中の外部レンダをまず停止（プロパティ削除より前） ---
@@ -143,12 +157,11 @@ def unregister():
         except Exception:
             pass
 
-    _safe_module_unregister(viewlayer_operations.unregister)
-    _safe_module_unregister(light_camera.unregister)
-    _safe_module_unregister(material_override.unregister)
-    _safe_module_unregister(collection_management.unregister)
-    _safe_module_unregister(main_panel.unregister)
-    _safe_module_unregister(render_override.unregister)
+    modules = _load_modules()
+    for name in reversed(MODULE_NAMES):
+        module = modules.get(name)
+        if module and hasattr(module, "unregister"):
+            _safe_module_unregister(module.unregister)
 
     # --- 追加プロパティの削除（存在チェックつき） ---
     def _del(tp, name):
