@@ -573,8 +573,14 @@ classes = (
 )
 
 def register():
+    def _safe_register_class(cls):
+        try:
+            bpy.utils.register_class(cls)
+        except (ValueError, RuntimeError):
+            pass
+
     for c in classes:
-        bpy.utils.register_class(c)
+        _safe_register_class(c)
     bpy.types.ViewLayer.vlm_render = PointerProperty(type=VLM_RenderSettings)
     
     def _update_world_settings(self, context):

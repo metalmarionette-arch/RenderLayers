@@ -1334,6 +1334,12 @@ class VLM_PT_panel(bpy.types.Panel):
 # register / unregister
 # ──────────────────────────────────────────────
 def register():
+    def _safe_register_class(cls):
+        try:
+            bpy.utils.register_class(cls)
+        except (ValueError, RuntimeError):
+            pass
+
     for cls in (
         VLM_PG_viewlayer_target,
         VLM_PG_collection_multi_state,
@@ -1348,7 +1354,7 @@ def register():
         VLM_OT_apply_render_settings_popup,
         VLM_PT_panel,
     ):
-        bpy.utils.register_class(cls)
+        _safe_register_class(cls)
 
     # Scene プロパティ（チェックボックス）
     bpy.types.Scene.vlm_enable_ao_multiply = bpy.props.BoolProperty(
@@ -1371,6 +1377,12 @@ def unregister():
     if hasattr(bpy.types.WindowManager, "vlm_render_layers"):
         del bpy.types.WindowManager.vlm_render_layers
 
+    def _safe_unregister_class(cls):
+        try:
+            bpy.utils.unregister_class(cls)
+        except (ValueError, RuntimeError):
+            pass
+
     for cls in (
         VLM_PT_panel,
         VLM_OT_apply_render_settings_popup,
@@ -1385,7 +1397,7 @@ def unregister():
         VLM_PG_collection_multi_state,
         VLM_PG_viewlayer_target,
     ):
-        bpy.utils.unregister_class(cls)
+        _safe_unregister_class(cls)
     if hasattr(bpy.types.Scene, "vlm_enable_ao_multiply"):
         del bpy.types.Scene.vlm_enable_ao_multiply
     if hasattr(bpy.types.Scene, "vlm_ui_show_world"):
