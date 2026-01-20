@@ -95,8 +95,14 @@ classes = (
 )
 
 def register():
+    def _safe_register_class(cls):
+        try:
+            bpy.utils.register_class(cls)
+        except (ValueError, RuntimeError):
+            pass
+
     for c in classes:
-        bpy.utils.register_class(c)
+        _safe_register_class(c)
     # ViewLayer に JSON 文字列プロパティを用意
     bpy.types.ViewLayer.vlm_light_state_dict = bpy.props.StringProperty(
         name="ライト状態辞書",
@@ -105,6 +111,13 @@ def register():
     )
 
 def unregister():
+    def _safe_unregister_class(cls):
+        try:
+            bpy.utils.unregister_class(cls)
+        except (ValueError, RuntimeError):
+            pass
+
     for c in reversed(classes):
-        bpy.utils.unregister_class(c)
-    del bpy.types.ViewLayer.vlm_light_state_dict
+        _safe_unregister_class(c)
+    if hasattr(bpy.types.ViewLayer, "vlm_light_state_dict"):
+        del bpy.types.ViewLayer.vlm_light_state_dict

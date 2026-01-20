@@ -538,14 +538,21 @@ classes = (
 )
 
 def register():
+    def _safe_register_class(cls):
+        try:
+            bpy.utils.register_class(cls)
+        except (ValueError, RuntimeError):
+            pass
+
     # ① PropertyGroup 登録
-    bpy.utils.register_class(MaterialBackupItem)
+    _safe_register_class(MaterialBackupItem)
     # ② Object にコレクションプロパティを追加
-    bpy.types.Object.backup_materials = CollectionProperty(type=MaterialBackupItem)
+    if not hasattr(bpy.types.Object, "backup_materials"):
+        bpy.types.Object.backup_materials = CollectionProperty(type=MaterialBackupItem)
 
     # 既存の operators 登録
     for c in classes:
-        bpy.utils.register_class(c)
+        _safe_register_class(c)
 
     # ── render_pre ハンドラを最後に追加 ──
     #if _render_pre not in bpy.app.handlers.render_pre:
@@ -566,7 +573,14 @@ def unregister():
         bpy.app.handlers.depsgraph_update_post.remove(_viewlayer_changed_handler)
 
     # operators のアンレジスターや CollectionProperty の削除など…
+    def _safe_unregister_class(cls):
+        try:
+            bpy.utils.unregister_class(cls)
+        except (ValueError, RuntimeError):
+            pass
+
     for c in reversed(classes):
-        bpy.utils.unregister_class(c)
-    del bpy.types.Object.backup_materials
-    bpy.utils.unregister_class(MaterialBackupItem)
+        _safe_unregister_class(c)
+    if hasattr(bpy.types.Object, "backup_materials"):
+        del bpy.types.Object.backup_materials
+    _safe_unregister_class(MaterialBackupItem)

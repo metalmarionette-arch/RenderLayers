@@ -10,54 +10,92 @@ bl_info = {
     "category":    "Render",
 }
 
+import importlib
 import bpy
 from bpy.props import (
     StringProperty, BoolProperty, IntProperty, FloatProperty, EnumProperty
 )
 
-# ▼ ここで一度だけモジュールを import（register/unregister 内で再importしない）
-from . import (
-    render_override,
-    main_panel,
-    collection_management,
-    material_override,
-    light_camera,
-    viewlayer_operations,
+MODULE_NAMES = (
+    "render_override",
+    "main_panel",
+    "collection_management",
+    "material_override",
+    "light_camera",
+    "viewlayer_operations",
 )
+
+_modules = {}
+
+def _load_modules():
+    global _modules
+    if _modules:
+        return _modules
+    loaded = {}
+    for name in MODULE_NAMES:
+        try:
+            loaded[name] = importlib.import_module(f"{__name__}.{name}")
+        except Exception:
+            loaded[name] = None
+    _modules = loaded
+    return _modules
 
 # ----------------------------------------------------------------
 # register / unregister
 # ----------------------------------------------------------------
 def register():
+    def _safe_module_register(func):
+        try:
+            func()
+        except Exception:
+            pass
+
+    def _safe_prop(target, name, prop):
+        if not hasattr(target, name):
+            setattr(target, name, prop)
+
     # --- 既存の簡易プロパティ ---
-    bpy.types.Collection.vlm_temp_mat = StringProperty(
-        name="Temp Material",
-        description="コレクションに適用するマテリアル（未確定）",
-        default=""
+    _safe_prop(
+        bpy.types.Collection,
+        "vlm_temp_mat",
+        StringProperty(
+            name="Temp Material",
+            description="コレクションに適用するマテリアル（未確定）",
+            default="",
+        ),
     )
-    bpy.types.ViewLayer.vlm_render_this_layer = BoolProperty(
-        name="Render this layer",
-        description="このビューレイヤーを『全Layersレンダリング』に含める",
-        default=True
+    _safe_prop(
+        bpy.types.ViewLayer,
+        "vlm_render_this_layer",
+        BoolProperty(
+            name="Render this layer",
+            description="このビューレイヤーを『全Layersレンダリング』に含める",
+            default=True,
+        ),
     )
 
     # --- 折りたたみUIの状態（Scene に保存） ---
-    bpy.types.Scene.vlm_ui_show_collections      = BoolProperty(default=True)
-    bpy.types.Scene.vlm_ui_show_mat_backup       = BoolProperty(default=True)
-    bpy.types.Scene.vlm_ui_show_render_engine    = BoolProperty(default=True)
-    bpy.types.Scene.vlm_ui_show_camera           = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_world            = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_lights           = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_format           = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_frame_range      = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_output_nodes     = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_render_output    = BoolProperty(default=True)
-    bpy.types.Scene.vlm_ui_show_sample_override  = BoolProperty(default=False)
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_collections", BoolProperty(default=True))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_mat_backup", BoolProperty(default=True))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_render_engine", BoolProperty(default=True))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_camera", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_world", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_lights", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_format", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_frame_range", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_output_nodes", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_render_output", BoolProperty(default=True))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_sample_override", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_cycles_light_paths", BoolProperty(default=False))
 
-    bpy.types.Scene.vlm_skip_existing_frames = BoolProperty(
-        name="Skip Existing Frames",
-        description="既に書き出されたフレームがあればスキップして次のフレームからレンダーを続行する",
-        default=False,
+    _safe_prop(
+        bpy.types.Scene,
+        "vlm_skip_existing_frames",
+        BoolProperty(
+            name="Skip Existing Frames",
+            description="既に書き出されたフレームがあればスキップして次のフレームからレンダーを続行する",
+            default=False,
+        ),
     )
 
     # --- サンプル強制上書き（Scene） ---
@@ -68,24 +106,41 @@ def register():
         except Exception:
             pass
 
-    bpy.types.Scene.vlm_force_samples_enable = BoolProperty(
-        name="Force Render Samples", default=False, update=_update_force_samples
+    _safe_prop(
+        bpy.types.Scene,
+        "vlm_force_samples_enable",
+        BoolProperty(name="Force Render Samples", default=False, update=_update_force_samples),
     )
-    bpy.types.Scene.vlm_force_samples_cycles = IntProperty(
-        name="Cycles Samples (Force)", default=16, min=1, max=4096, update=_update_force_samples
+    _safe_prop(
+        bpy.types.Scene,
+        "vlm_force_samples_cycles",
+        IntProperty(
+            name="Cycles Samples (Force)",
+            default=16,
+            min=1,
+            max=4096,
+            update=_update_force_samples,
+        ),
     )
-    bpy.types.Scene.vlm_force_samples_eevee = IntProperty(
-        name="Eevee Samples (Force)", default=16, min=1, max=4096, update=_update_force_samples
+    _safe_prop(
+        bpy.types.Scene,
+        "vlm_force_samples_eevee",
+        IntProperty(
+            name="Eevee Samples (Force)",
+            default=16,
+            min=1,
+            max=4096,
+            update=_update_force_samples,
+        ),
     )
 
 
     # --- モジュール登録（トップの import を利用） ---
-    render_override.register()
-    main_panel.register()
-    collection_management.register()
-    material_override.register()
-    light_camera.register()
-    viewlayer_operations.register()
+    modules = _load_modules()
+    for name in MODULE_NAMES:
+        module = modules.get(name)
+        if module and hasattr(module, "register"):
+            _safe_module_register(module.register)
 
 def unregister():
     # --- 実行中の外部レンダをまず停止（プロパティ削除より前） ---
@@ -96,18 +151,17 @@ def unregister():
         pass
 
     # --- モジュールの unregister（逆順） ---
-    try: viewlayer_operations.unregister()
-    except Exception: pass
-    try: light_camera.unregister()
-    except Exception: pass
-    try: material_override.unregister()
-    except Exception: pass
-    try: collection_management.unregister()
-    except Exception: pass
-    try: main_panel.unregister()
-    except Exception: pass
-    try: render_override.unregister()
-    except Exception: pass
+    def _safe_module_unregister(func):
+        try:
+            func()
+        except Exception:
+            pass
+
+    modules = _load_modules()
+    for name in reversed(MODULE_NAMES):
+        module = modules.get(name)
+        if module and hasattr(module, "unregister"):
+            _safe_module_unregister(module.unregister)
 
     # --- 追加プロパティの削除（存在チェックつき） ---
     def _del(tp, name):
@@ -121,6 +175,7 @@ def unregister():
         "vlm_ui_show_camera","vlm_ui_show_world","vlm_ui_show_lights","vlm_ui_show_format",
         "vlm_ui_show_frame_range","vlm_ui_show_output_nodes","vlm_ui_show_render_output",
         "vlm_ui_show_sample_override",
+        "vlm_ui_show_cycles_light_paths",
         "vlm_skip_existing_frames",
         "vlm_force_samples_enable","vlm_force_samples_cycles","vlm_force_samples_eevee",
         "vlm_gpu_safe_mode",

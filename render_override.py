@@ -46,6 +46,69 @@ def _sanitize_engine_values(scene: bpy.types.Scene) -> None:
             if fixed != getattr(vrs, "engine", ""):
                 vrs.engine = fixed
 
+LIGHT_PATH_PROP_MAP = [
+    ("light_path_max_bounces", "max_bounces"),
+    ("light_path_diffuse_bounces", "diffuse_bounces"),
+    ("light_path_glossy_bounces", "glossy_bounces"),
+    ("light_path_transmission_bounces", "transmission_bounces"),
+    ("light_path_volume_bounces", "volume_bounces"),
+    ("light_path_transparent_bounces", "transparent_max_bounces"),
+    ("light_path_clamp_direct", "sample_clamp_direct"),
+    ("light_path_clamp_indirect", "sample_clamp_indirect"),
+    ("light_path_filter_glossy", "filter_glossy"),
+    ("light_path_caustics_reflective", "caustics_reflective"),
+    ("light_path_caustics_refractive", "caustics_refractive"),
+]
+
+FAST_GI_PROP_MAP = [
+    ("fast_gi_use", "use_fast_gi"),
+    ("fast_gi_method", "fast_gi_method"),
+    ("fast_gi_ao_factor", "fast_gi_ao_factor"),
+    ("fast_gi_ao_distance", "fast_gi_ao_distance"),
+    ("fast_gi_viewport_bounces", "fast_gi_viewport_bounces"),
+    ("fast_gi_render_bounces", "fast_gi_render_bounces"),
+]
+
+def _sync_cycles_light_paths(rs, cycles_settings) -> None:
+    if rs is None or cycles_settings is None:
+        return
+    for rs_prop, cycles_prop in LIGHT_PATH_PROP_MAP:
+        if hasattr(rs, rs_prop) and hasattr(cycles_settings, cycles_prop):
+            try:
+                setattr(rs, rs_prop, getattr(cycles_settings, cycles_prop))
+            except Exception:
+                pass
+
+def _sync_cycles_fast_gi(rs, cycles_settings) -> None:
+    if rs is None or cycles_settings is None:
+        return
+    for rs_prop, cycles_prop in FAST_GI_PROP_MAP:
+        if hasattr(rs, rs_prop) and hasattr(cycles_settings, cycles_prop):
+            try:
+                setattr(rs, rs_prop, getattr(cycles_settings, cycles_prop))
+            except Exception:
+                pass
+
+def _apply_cycles_light_paths(rs, cycles_settings) -> None:
+    if rs is None or cycles_settings is None:
+        return
+    for rs_prop, cycles_prop in LIGHT_PATH_PROP_MAP:
+        if hasattr(rs, rs_prop) and hasattr(cycles_settings, cycles_prop):
+            try:
+                setattr(cycles_settings, cycles_prop, getattr(rs, rs_prop))
+            except Exception:
+                pass
+
+def _apply_cycles_fast_gi(rs, cycles_settings) -> None:
+    if rs is None or cycles_settings is None:
+        return
+    for rs_prop, cycles_prop in FAST_GI_PROP_MAP:
+        if hasattr(rs, rs_prop) and hasattr(cycles_settings, cycles_prop):
+            try:
+                setattr(cycles_settings, cycles_prop, getattr(rs, rs_prop))
+            except Exception:
+                pass
+
 def _update_render_settings(self, context):
     pass
 def _camera_poll(self, obj):
@@ -96,6 +159,112 @@ class VLM_RenderSettings(PropertyGroup):
         name="Samples",
         description="Cycles/Eeveeのサンプル数（1-4096）",
         default=64, min=1, max=4096,
+        update=_update_render_settings
+    )
+
+    # Cycles ライトパス上書き
+    light_paths_enable: BoolProperty(
+        name="Light Paths Override",
+        description="このレイヤーの Cycles ライトパス設定を使用する",
+        default=False,
+        update=_update_render_settings
+    )
+
+    light_path_max_bounces: IntProperty(
+        name="Max Bounces",
+        default=12, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_diffuse_bounces: IntProperty(
+        name="Diffuse Bounces",
+        default=4, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_glossy_bounces: IntProperty(
+        name="Glossy Bounces",
+        default=4, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_transmission_bounces: IntProperty(
+        name="Transmission Bounces",
+        default=12, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_volume_bounces: IntProperty(
+        name="Volume Bounces",
+        default=0, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_transparent_bounces: IntProperty(
+        name="Transparent Bounces",
+        default=8, min=0, max=1024,
+        update=_update_render_settings
+    )
+    light_path_clamp_direct: FloatProperty(
+        name="Clamp Direct",
+        default=0.0, min=0.0,
+        update=_update_render_settings
+    )
+    light_path_clamp_indirect: FloatProperty(
+        name="Clamp Indirect",
+        default=10.0, min=0.0,
+        update=_update_render_settings
+    )
+    light_path_filter_glossy: FloatProperty(
+        name="Filter Glossy",
+        default=1.0, min=0.0,
+        update=_update_render_settings
+    )
+    light_path_caustics_reflective: BoolProperty(
+        name="Caustics Reflective",
+        default=True,
+        update=_update_render_settings
+    )
+    light_path_caustics_refractive: BoolProperty(
+        name="Caustics Refractive",
+        default=True,
+        update=_update_render_settings
+    )
+
+    # Cycles 高速GI近似
+    fast_gi_enable: BoolProperty(
+        name="Fast GI Override",
+        description="このレイヤーの Cycles 高速GI近似設定を使用する",
+        default=False,
+        update=_update_render_settings
+    )
+    fast_gi_use: BoolProperty(
+        name="Use Fast GI",
+        default=False,
+        update=_update_render_settings
+    )
+    fast_gi_method: EnumProperty(
+        name="Fast GI Method",
+        items=[
+            ("REPLACE", "置き換え", ""),
+            ("ADD", "追加", ""),
+        ],
+        default="REPLACE",
+        update=_update_render_settings
+    )
+    fast_gi_ao_factor: FloatProperty(
+        name="AO Factor",
+        default=1.0, min=0.0,
+        update=_update_render_settings
+    )
+    fast_gi_ao_distance: FloatProperty(
+        name="AO Distance",
+        default=10.0, min=0.0,
+        update=_update_render_settings
+    )
+    fast_gi_viewport_bounces: IntProperty(
+        name="Viewport Bounces",
+        default=1, min=0, max=1024,
+        update=_update_render_settings
+    )
+    fast_gi_render_bounces: IntProperty(
+        name="Render Bounces",
+        default=1, min=0, max=1024,
         update=_update_render_settings
     )
 
@@ -174,6 +343,8 @@ def sync_scene_settings_to_addon(scene):
         if rs.engine == 'CYCLES' and hasattr(scene, 'cycles'):
             rs.samples     = scene.cycles.samples
             rs.use_denoise = scene.cycles.use_denoising
+            _sync_cycles_light_paths(rs, scene.cycles)
+            _sync_cycles_fast_gi(rs, scene.cycles)
         elif rs.engine == 'BLENDER_EEVEE_NEXT' and hasattr(scene, 'eevee'):
             rs.samples = scene.eevee.taa_render_samples
         
@@ -208,6 +379,8 @@ def sync_scene_settings_to_addon(scene):
         top_rs.format_enable = True
         top_rs.frame_enable  = True
         top_rs.world_enable  = True  # ← World も基準ON
+        top_rs.light_paths_enable = True
+        top_rs.fast_gi_enable = True
 
         # Worldの初期化（未設定なら Scene.world を基準に）
         if not getattr(top_vl, "vlm_world", None) and scene.world:
@@ -300,6 +473,10 @@ def apply_render_override(scene: bpy.types.Scene,
             scene.cycles.samples = samples_val
         # デノイズはエンジン選択元に追随（UIから削除していても内部値は尊重）
         scene.cycles.use_denoising = bool(getattr(eng_src, "use_denoise", False))
+        light_src = rs if (view_layer == top_vl or getattr(rs, "light_paths_enable", False)) else top_rs
+        _apply_cycles_light_paths(light_src, scene.cycles)
+        fast_gi_src = rs if (view_layer == top_vl or getattr(rs, "fast_gi_enable", False)) else top_rs
+        _apply_cycles_fast_gi(fast_gi_src, scene.cycles)
 
     elif r.engine in {'BLENDER_EEVEE_NEXT'}:
         if samples_val is not None:
@@ -396,9 +573,16 @@ classes = (
 )
 
 def register():
+    def _safe_register_class(cls):
+        try:
+            bpy.utils.register_class(cls)
+        except (ValueError, RuntimeError):
+            pass
+
     for c in classes:
-        bpy.utils.register_class(c)
-    bpy.types.ViewLayer.vlm_render = PointerProperty(type=VLM_RenderSettings)
+        _safe_register_class(c)
+    if not hasattr(bpy.types.ViewLayer, "vlm_render"):
+        bpy.types.ViewLayer.vlm_render = PointerProperty(type=VLM_RenderSettings)
     
     def _update_world_settings(self, context):
         if context.scene and context.view_layer:
@@ -410,11 +594,12 @@ def register():
                     if area.type == 'VIEW_3D':
                         area.tag_redraw()
     
-    bpy.types.ViewLayer.vlm_world = PointerProperty(
-        name="World",
-        type=bpy.types.World,
-        update=_update_world_settings
-    )
+    if not hasattr(bpy.types.ViewLayer, "vlm_world"):
+        bpy.types.ViewLayer.vlm_world = PointerProperty(
+            name="World",
+            type=bpy.types.World,
+            update=_update_world_settings,
+        )
     
     if load_post_handler not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(load_post_handler)
@@ -423,7 +608,7 @@ def register():
         bpy.types.ViewLayer.vlm_world = bpy.props.PointerProperty(
             name="World",
             type=bpy.types.World,
-            description="このビューレイヤーで使用する World（環境）"
+            description="このビューレイヤーで使用する World（環境）",
         )
 
 
