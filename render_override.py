@@ -581,7 +581,8 @@ def register():
 
     for c in classes:
         _safe_register_class(c)
-    bpy.types.ViewLayer.vlm_render = PointerProperty(type=VLM_RenderSettings)
+    if not hasattr(bpy.types.ViewLayer, "vlm_render"):
+        bpy.types.ViewLayer.vlm_render = PointerProperty(type=VLM_RenderSettings)
     
     def _update_world_settings(self, context):
         if context.scene and context.view_layer:
@@ -593,11 +594,12 @@ def register():
                     if area.type == 'VIEW_3D':
                         area.tag_redraw()
     
-    bpy.types.ViewLayer.vlm_world = PointerProperty(
-        name="World",
-        type=bpy.types.World,
-        update=_update_world_settings
-    )
+    if not hasattr(bpy.types.ViewLayer, "vlm_world"):
+        bpy.types.ViewLayer.vlm_world = PointerProperty(
+            name="World",
+            type=bpy.types.World,
+            update=_update_world_settings,
+        )
     
     if load_post_handler not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(load_post_handler)
@@ -606,7 +608,7 @@ def register():
         bpy.types.ViewLayer.vlm_world = bpy.props.PointerProperty(
             name="World",
             type=bpy.types.World,
-            description="このビューレイヤーで使用する World（環境）"
+            description="このビューレイヤーで使用する World（環境）",
         )
 
 

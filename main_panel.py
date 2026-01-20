@@ -1340,6 +1340,10 @@ def register():
         except (ValueError, RuntimeError):
             pass
 
+    def _safe_prop(target, name, prop):
+        if not hasattr(target, name):
+            setattr(target, name, prop)
+
     for cls in (
         VLM_PG_viewlayer_target,
         VLM_PG_collection_multi_state,
@@ -1357,15 +1361,21 @@ def register():
         _safe_register_class(cls)
 
     # Scene プロパティ（チェックボックス）
-    bpy.types.Scene.vlm_enable_ao_multiply = bpy.props.BoolProperty(
-        name="AO乗算を追加",
-        description="“出力ノードを準備” 実行時に、レンダーレイヤーの『画像』出力へAOを乗算（RGBカーブ適用）します",
-        default=False
+    _safe_prop(
+        bpy.types.Scene,
+        "vlm_enable_ao_multiply",
+        bpy.props.BoolProperty(
+            name="AO乗算を追加",
+            description="“出力ノードを準備” 実行時に、レンダーレイヤーの『画像』出力へAOを乗算（RGBカーブ適用）します",
+            default=False,
+        ),
     )
 
     # WindowManager プロパティ（レンダー設定一括適用用の一時コレクション）
-    bpy.types.WindowManager.vlm_render_layers = bpy.props.CollectionProperty(
-        type=VLM_PG_render_layer_entry,
+    _safe_prop(
+        bpy.types.WindowManager,
+        "vlm_render_layers",
+        bpy.props.CollectionProperty(type=VLM_PG_render_layer_entry),
     )
     
     if not hasattr(bpy.types.Scene, "vlm_ui_show_world"):

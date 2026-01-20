@@ -29,36 +29,52 @@ from . import (
 # register / unregister
 # ----------------------------------------------------------------
 def register():
+    def _safe_prop(target, name, prop):
+        if not hasattr(target, name):
+            setattr(target, name, prop)
+
     # --- 既存の簡易プロパティ ---
-    bpy.types.Collection.vlm_temp_mat = StringProperty(
-        name="Temp Material",
-        description="コレクションに適用するマテリアル（未確定）",
-        default=""
+    _safe_prop(
+        bpy.types.Collection,
+        "vlm_temp_mat",
+        StringProperty(
+            name="Temp Material",
+            description="コレクションに適用するマテリアル（未確定）",
+            default="",
+        ),
     )
-    bpy.types.ViewLayer.vlm_render_this_layer = BoolProperty(
-        name="Render this layer",
-        description="このビューレイヤーを『全Layersレンダリング』に含める",
-        default=True
+    _safe_prop(
+        bpy.types.ViewLayer,
+        "vlm_render_this_layer",
+        BoolProperty(
+            name="Render this layer",
+            description="このビューレイヤーを『全Layersレンダリング』に含める",
+            default=True,
+        ),
     )
 
     # --- 折りたたみUIの状態（Scene に保存） ---
-    bpy.types.Scene.vlm_ui_show_collections      = BoolProperty(default=True)
-    bpy.types.Scene.vlm_ui_show_mat_backup       = BoolProperty(default=True)
-    bpy.types.Scene.vlm_ui_show_render_engine    = BoolProperty(default=True)
-    bpy.types.Scene.vlm_ui_show_camera           = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_world            = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_lights           = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_format           = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_frame_range      = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_output_nodes     = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_render_output    = BoolProperty(default=True)
-    bpy.types.Scene.vlm_ui_show_sample_override  = BoolProperty(default=False)
-    bpy.types.Scene.vlm_ui_show_cycles_light_paths = BoolProperty(default=False)
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_collections", BoolProperty(default=True))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_mat_backup", BoolProperty(default=True))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_render_engine", BoolProperty(default=True))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_camera", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_world", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_lights", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_format", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_frame_range", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_output_nodes", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_render_output", BoolProperty(default=True))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_sample_override", BoolProperty(default=False))
+    _safe_prop(bpy.types.Scene, "vlm_ui_show_cycles_light_paths", BoolProperty(default=False))
 
-    bpy.types.Scene.vlm_skip_existing_frames = BoolProperty(
-        name="Skip Existing Frames",
-        description="既に書き出されたフレームがあればスキップして次のフレームからレンダーを続行する",
-        default=False,
+    _safe_prop(
+        bpy.types.Scene,
+        "vlm_skip_existing_frames",
+        BoolProperty(
+            name="Skip Existing Frames",
+            description="既に書き出されたフレームがあればスキップして次のフレームからレンダーを続行する",
+            default=False,
+        ),
     )
 
     # --- サンプル強制上書き（Scene） ---
@@ -69,14 +85,32 @@ def register():
         except Exception:
             pass
 
-    bpy.types.Scene.vlm_force_samples_enable = BoolProperty(
-        name="Force Render Samples", default=False, update=_update_force_samples
+    _safe_prop(
+        bpy.types.Scene,
+        "vlm_force_samples_enable",
+        BoolProperty(name="Force Render Samples", default=False, update=_update_force_samples),
     )
-    bpy.types.Scene.vlm_force_samples_cycles = IntProperty(
-        name="Cycles Samples (Force)", default=16, min=1, max=4096, update=_update_force_samples
+    _safe_prop(
+        bpy.types.Scene,
+        "vlm_force_samples_cycles",
+        IntProperty(
+            name="Cycles Samples (Force)",
+            default=16,
+            min=1,
+            max=4096,
+            update=_update_force_samples,
+        ),
     )
-    bpy.types.Scene.vlm_force_samples_eevee = IntProperty(
-        name="Eevee Samples (Force)", default=16, min=1, max=4096, update=_update_force_samples
+    _safe_prop(
+        bpy.types.Scene,
+        "vlm_force_samples_eevee",
+        IntProperty(
+            name="Eevee Samples (Force)",
+            default=16,
+            min=1,
+            max=4096,
+            update=_update_force_samples,
+        ),
     )
 
 
