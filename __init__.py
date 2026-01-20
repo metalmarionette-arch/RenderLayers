@@ -29,6 +29,12 @@ from . import (
 # register / unregister
 # ----------------------------------------------------------------
 def register():
+    def _safe_module_register(func):
+        try:
+            func()
+        except Exception:
+            pass
+
     def _safe_prop(target, name, prop):
         if not hasattr(target, name):
             setattr(target, name, prop)
@@ -115,12 +121,12 @@ def register():
 
 
     # --- モジュール登録（トップの import を利用） ---
-    render_override.register()
-    main_panel.register()
-    collection_management.register()
-    material_override.register()
-    light_camera.register()
-    viewlayer_operations.register()
+    _safe_module_register(render_override.register)
+    _safe_module_register(main_panel.register)
+    _safe_module_register(collection_management.register)
+    _safe_module_register(material_override.register)
+    _safe_module_register(light_camera.register)
+    _safe_module_register(viewlayer_operations.register)
 
 def unregister():
     # --- 実行中の外部レンダをまず停止（プロパティ削除より前） ---
@@ -131,18 +137,18 @@ def unregister():
         pass
 
     # --- モジュールの unregister（逆順） ---
-    try: viewlayer_operations.unregister()
-    except Exception: pass
-    try: light_camera.unregister()
-    except Exception: pass
-    try: material_override.unregister()
-    except Exception: pass
-    try: collection_management.unregister()
-    except Exception: pass
-    try: main_panel.unregister()
-    except Exception: pass
-    try: render_override.unregister()
-    except Exception: pass
+    def _safe_module_unregister(func):
+        try:
+            func()
+        except Exception:
+            pass
+
+    _safe_module_unregister(viewlayer_operations.unregister)
+    _safe_module_unregister(light_camera.unregister)
+    _safe_module_unregister(material_override.unregister)
+    _safe_module_unregister(collection_management.unregister)
+    _safe_module_unregister(main_panel.unregister)
+    _safe_module_unregister(render_override.unregister)
 
     # --- 追加プロパティの削除（存在チェックつき） ---
     def _del(tp, name):
