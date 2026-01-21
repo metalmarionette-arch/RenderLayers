@@ -38,6 +38,10 @@ class VLM_PG_collection_toggle(bpy.types.PropertyGroup):
     level: bpy.props.IntProperty(name="Depth", default=0)
 
 
+class VLM_PG_collection_name(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(name="Collection Name")
+
+
 class VLM_PG_render_layer_entry(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(name="ViewLayer Name")
 
@@ -451,6 +455,127 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
         layer_txt = ", ".join([f"{src}→{dst}" for src, dst in created])
         rename_txt = "" if not rename_from else f" / 名前置換: '{rename_from}'→'{rename_to}'"
         self.report({'INFO'}, f"複製完了: {layer_txt} / {state_txt}{rename_txt}")
+        return {'FINISHED'}
+
+
+class VLM_OT_create_viewlayers_from_collections_popup(bpy.types.Operator):
+    bl_idname = "vlm.create_viewlayers_from_collections_popup"
+    bl_label  = "コレクションからビューレイヤー作成"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    collections_to_create: bpy.props.CollectionProperty(type=VLM_PG_collection_toggle)
+    extra_content_on: bpy.props.CollectionProperty(type=VLM_PG_collection_toggle)
+    name_prefix: bpy.props.StringProperty(name="プレフィックス", description="名前の頭に付ける文字列")
+    name_suffix: bpy.props.StringProperty(name="サフィックス", description="名前の末尾に付ける文字列")
+
+    def _collect_layer_collections(self, lc, level=0):
+        if lc.collection.name in {"Scene Collection", "シーンコレクション"}:
+            for child in lc.children:
+                self._collect_layer_collections(child, level)
+            return
+
+        item = self.collections_to_create.add()
+        item.name = lc.collection.name
+        item.level = level
+        item.enabled = False
+
+        extra = self.extra_content_on.add()
+        extra.name = lc.collection.name
+        extra.level = level
+        extra.enabled = False
+
+        for child in lc.children:
+            self._collect_layer_collections(child, level + 1)
+
+    def invoke(self, context, event):
+        self.collections_to_create.clear()
+        self.extra_content_on.clear()
+
+        if context.view_layer:
+            self._collect_layer_collections(context.view_layer.layer_collection, 0)
+
+        return context.window_manager.invoke_props_dialog(self, width=460)
+
+    def draw(self, context):
+        layout = self.layout
+
+        layout.label(text="名前付け (任意)", icon='SORTALPHA')
+        name_box = layout.box()
+        row = name_box.row(align=True)
+        row.prop(self, "name_prefix", text="プレフィックス")
+        row.prop(self, "name_suffix", text="サフィックス")
+
+        layout.separator()
+        layout.label(text="ビューレイヤー作成用コレクション", icon='OUTLINER_COLLECTION')
+        cbox = layout.box()
+        for coll in self.collections_to_create:
+            row = cbox.row(align=True)
+            row.separator(factor=0.4 + 0.2 * coll.level)
+            row.separator(factor=0.8 + 0.4 * coll.level)
+            row.prop(coll, "enabled", text="", toggle=True)
+            row.label(text=coll.name, icon='OUTLINER_COLLECTION')
+
+        layout.separator()
+        layout.label(text="追加で内容をONにするコレクション", icon='OUTLINER_COLLECTION')
+        ebox = layout.box()
+        for coll in self.extra_content_on:
+            row = ebox.row(align=True)
+            row.separator(factor=0.4 + 0.2 * coll.level)
+            row.separator(factor=0.8 + 0.4 * coll.level)
+            row.prop(coll, "enabled", text="", toggle=True)
+            row.label(text=coll.name, icon='OUTLINER_COLLECTION')
+
+        info = layout.box()
+        info.label(text="作成VLは、選択コレクション＋追加ONのみ内容ONになります。", icon='INFO')
+
+    def execute(self, context):
+        sc = context.scene
+        source_vl = context.view_layer
+        if not source_vl:
+            self.report({'WARNING'}, "アクティブなビューレイヤーがありません")
+            return {'CANCELLED'}
+
+        selected = [c.name for c in self.collections_to_create if c.enabled]
+        if not selected:
+            self.report({'WARNING'}, "作成するコレクションを選択してください")
+            return {'CANCELLED'}
+
+        all_names = [c.name for c in self.collections_to_create]
+        extra_on = {c.name for c in self.extra_content_on if c.enabled}
+        prefix = self.name_prefix or ""
+        suffix = self.name_suffix or ""
+
+        created = []
+        for coll_name in selected:
+            base_name = f"{prefix}{coll_name}{suffix}"
+            content_on = {coll_name} | extra_on
+            states = {name: (name in content_on) for name in all_names}
+
+            new_vl = colm.duplicate_view_layer_with_collections(
+                sc,
+                source_vl,
+                collection_states=states,
+                desired_name=base_name,
+            )
+            if not new_vl:
+                continue
+
+            if hasattr(new_vl, "vlm_content_switch_enable"):
+                new_vl.vlm_content_switch_enable = True
+            if hasattr(new_vl, "vlm_content_collection_names"):
+                new_vl.vlm_content_collection_names.clear()
+                for name in sorted(content_on):
+                    item = new_vl.vlm_content_collection_names.add()
+                    item.name = name
+
+            created.append(new_vl.name)
+
+        if not created:
+            self.report({'WARNING'}, "ビューレイヤーの作成に失敗しました")
+            return {'CANCELLED'}
+
+        created_txt = ", ".join(created)
+        self.report({'INFO'}, f"作成完了: {created_txt}")
         return {'FINISHED'}
 
 
@@ -876,6 +1001,7 @@ class VLM_PT_panel(bpy.types.Panel):
 
         dup_row = layout.row(align=True)
         dup_row.operator("vlm.duplicate_viewlayers_popup", icon='DUPLICATE')
+        dup_row.operator("vlm.create_viewlayers_from_collections_popup", icon='OUTLINER_COLLECTION')
         dup_row.operator("vlm.apply_collection_settings_popup", icon='MODIFIER_ON')
         dup_row.operator("vlm.apply_render_settings_popup", icon='RENDER_STILL')
 
@@ -1231,10 +1357,12 @@ def register():
         VLM_PG_viewlayer_target,
         VLM_PG_collection_multi_state,
         VLM_PG_collection_toggle,
+        VLM_PG_collection_name,
         VLM_PG_render_layer_entry,
         VLM_OT_add_shader_aovs,
         VLM_OT_prepare_output_nodes_plus,
         VLM_OT_duplicate_viewlayers_popup,
+        VLM_OT_create_viewlayers_from_collections_popup,
         VLM_OT_apply_collection_settings_popup,
         VLM_OT_apply_render_settings_popup,
         VLM_PT_panel,
@@ -1252,6 +1380,15 @@ def register():
     bpy.types.WindowManager.vlm_render_layers = bpy.props.CollectionProperty(
         type=VLM_PG_render_layer_entry,
     )
+
+    bpy.types.ViewLayer.vlm_content_switch_enable = bpy.props.BoolProperty(
+        name="Manage Collection Content On Switch",
+        description="ビューレイヤー切り替え時に内容ON/OFFを自動設定",
+        default=False,
+    )
+    bpy.types.ViewLayer.vlm_content_collection_names = bpy.props.CollectionProperty(
+        type=VLM_PG_collection_name,
+    )
     
     if not hasattr(bpy.types.Scene, "vlm_ui_show_world"):
         bpy.types.Scene.vlm_ui_show_world = bpy.props.BoolProperty(
@@ -1266,10 +1403,12 @@ def unregister():
         VLM_PT_panel,
         VLM_OT_apply_render_settings_popup,
         VLM_OT_apply_collection_settings_popup,
+        VLM_OT_create_viewlayers_from_collections_popup,
         VLM_OT_duplicate_viewlayers_popup,
         VLM_OT_prepare_output_nodes_plus,
         VLM_OT_add_shader_aovs,
         VLM_PG_render_layer_entry,
+        VLM_PG_collection_name,
         VLM_PG_collection_toggle,
         VLM_PG_collection_multi_state,
         VLM_PG_viewlayer_target,
@@ -1279,3 +1418,7 @@ def unregister():
         del bpy.types.Scene.vlm_enable_ao_multiply
     if hasattr(bpy.types.Scene, "vlm_ui_show_world"):
         del bpy.types.Scene.vlm_ui_show_world
+    if hasattr(bpy.types.ViewLayer, "vlm_content_switch_enable"):
+        del bpy.types.ViewLayer.vlm_content_switch_enable
+    if hasattr(bpy.types.ViewLayer, "vlm_content_collection_names"):
+        del bpy.types.ViewLayer.vlm_content_collection_names
