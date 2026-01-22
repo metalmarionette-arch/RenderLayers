@@ -804,7 +804,7 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             entry.frame_end = getattr(rs, "frame_end", sc.frame_end)
             entry.frame_step = getattr(rs, "frame_step", sc.frame_step)
 
-        return context.window_manager.invoke_props_dialog(self, width=980)
+        return context.window_manager.invoke_props_dialog(self, width=1960)
 
     def draw(self, context):
         layout = self.layout
@@ -816,19 +816,26 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             layout.label(text="(データを初期化できませんでした)", icon='ERROR')
             return
 
+        header = box.row(align=True)
+        header.label(text="レンダービュー", icon='RENDERLAYERS')
+        header.separator(factor=1.2)
+        header.label(text="変更名")
+        header.separator(factor=0.6)
+        header.label(text="削除")
+
         for entry in layers:
             row = box.row(align=True)
             name_cell = row.row(align=True)
-            name_cell.ui_units_x = 8.0
+            name_cell.ui_units_x = 10.0
             name_cell.label(text=entry.name, icon='RENDERLAYERS')
 
             rename_cell = row.row(align=True)
-            rename_cell.ui_units_x = 6.0
-            rename_cell.prop(entry, "rename_to", text="変更名")
+            rename_cell.ui_units_x = 8.0
+            rename_cell.prop(entry, "rename_to", text="")
 
             delete_cell = row.row(align=True)
-            delete_cell.ui_units_x = 2.0
-            delete_cell.prop(entry, "delete_layer", text="削除")
+            delete_cell.ui_units_x = 3.0
+            delete_cell.prop(entry, "delete_layer", text="")
 
             erow = row.row(align=True)
             erow.prop(entry, "engine_enable", text="")
