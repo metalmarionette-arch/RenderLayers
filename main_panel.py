@@ -25,8 +25,6 @@ class VLM_PG_collection_multi_state(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(name="Collection Name")
     level: bpy.props.IntProperty(name="Depth", default=0)
 
-    rename_to: bpy.props.StringProperty(name="変更名")
-    delete_collection: bpy.props.BoolProperty(name="削除", default=False)
     content_state: bpy.props.EnumProperty(name="内容", items=STATE_ITEMS, default='KEEP')
     select_state: bpy.props.EnumProperty(name="選択", items=STATE_ITEMS, default='KEEP')
     render_state: bpy.props.EnumProperty(name="レンダー", items=STATE_ITEMS, default='KEEP')
@@ -46,6 +44,8 @@ class VLM_PG_collection_name(bpy.types.PropertyGroup):
 
 class VLM_PG_render_layer_entry(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(name="ViewLayer Name")
+    rename_to: bpy.props.StringProperty(name="変更名")
+    delete_layer: bpy.props.BoolProperty(name="削除", default=False)
 
     engine_enable: bpy.props.BoolProperty(name="エンジンを上書き", default=False)
     engine: bpy.props.EnumProperty(name="エンジン", items=ro.ENGINES, default="BLENDER_EEVEE_NEXT")
@@ -653,8 +653,6 @@ class VLM_OT_apply_collection_settings_popup(bpy.types.Operator):
 
         # グループ間の隙間
         GROUP_GAP   = 0.4
-        RENAME_WIDTH = 6.0
-        DELETE_WIDTH = 2.0
 
         # =========================
         # ヘッダー行
@@ -677,15 +675,6 @@ class VLM_OT_apply_collection_settings_popup(bpy.types.Operator):
 
             if i != len(titles) - 1:
                 states_head.separator(factor=GROUP_GAP)
-
-        rename_head = head.row(align=True)
-        rename_head.ui_units_x = RENAME_WIDTH
-        rename_head.label(text="名前変更")
-
-        delete_head = head.row(align=True)
-        delete_head.ui_units_x = DELETE_WIDTH
-        delete_head.alignment = 'CENTER'
-        delete_head.label(text="削除")
 
         # =========================
         # 各コレクション行
@@ -712,17 +701,9 @@ class VLM_OT_apply_collection_settings_popup(bpy.types.Operator):
                 if i != len(prop_names) - 1:
                     states_row.separator(factor=GROUP_GAP)
 
-            rename_row = row.row(align=True)
-            rename_row.ui_units_x = RENAME_WIDTH
-            rename_row.prop(rule, "rename_to", text="")
-
-            delete_row = row.row(align=True)
-            delete_row.ui_units_x = DELETE_WIDTH
-            delete_row.prop(rule, "delete_collection", text="")
-
         hint = layout.box()
         hint.label(
-            text="ON/OFF を選んだ項目のみ変更します。変更なしは現状維持。名前変更/削除もここで指定できます。",
+            text="ON/OFF を選んだ項目のみ変更します。変更なしは現状維持。",
             icon='INFO'
         )
 
@@ -742,17 +723,7 @@ class VLM_OT_apply_collection_settings_popup(bpy.types.Operator):
             return on_val if val == 'ON' else off_val
 
         settings = {}
-        rename_map = {}
-        delete_names = set()
         for rule in self.collection_rules:
-            if rule.delete_collection:
-                delete_names.add(rule.name)
-                continue
-
-            rename_to = (rule.rename_to or "").strip()
-            if rename_to and rename_to != rule.name:
-                rename_map[rule.name] = rename_to
-
             conf = {
                 "include": _state(rule.content_state, True, False),
                 "select": _state(rule.select_state, True, False),
@@ -763,87 +734,24 @@ class VLM_OT_apply_collection_settings_popup(bpy.types.Operator):
             if any(v is not None for v in conf.values()):
                 settings[rule.name] = conf
 
-        if not settings and not rename_map and not delete_names:
+        if not settings:
             self.report({'WARNING'}, "変更内容が選択されていません")
             return {'CANCELLED'}
 
-        applied_layers = []
-        touched_cols = []
-        if settings:
-            applied_layers, touched_cols = colm.apply_collection_settings(sc, targets, settings)
-
-        rename_applied = []
-        rename_skipped = []
-        for old_name, new_name in rename_map.items():
-            coll = bpy.data.collections.get(old_name)
-            if coll is None:
-                rename_skipped.append(old_name)
-                continue
-            existing = bpy.data.collections.get(new_name)
-            if existing and existing != coll:
-                rename_skipped.append(old_name)
-                continue
-            coll.name = new_name
-            rename_applied.append(f"{old_name}→{new_name}")
-
-        if rename_map:
-            for vl in sc.view_layers:
-                names_list = getattr(vl, "vlm_content_collection_names", None)
-                if names_list is None:
-                    continue
-                for item in names_list:
-                    if item.name in rename_map:
-                        item.name = rename_map[item.name]
-
-        deleted = []
-        delete_failed = []
-        for name in sorted(delete_names):
-            if name in {"Scene Collection", "シーンコレクション"}:
-                delete_failed.append(name)
-                continue
-            coll = bpy.data.collections.get(name)
-            if coll is None:
-                delete_failed.append(name)
-                continue
-            try:
-                bpy.data.collections.remove(coll, do_unlink=True)
-                deleted.append(name)
-            except Exception:
-                delete_failed.append(name)
-
-        if delete_names:
-            for vl in sc.view_layers:
-                names_list = getattr(vl, "vlm_content_collection_names", None)
-                if names_list is None:
-                    continue
-                for idx in reversed(range(len(names_list))):
-                    if names_list[idx].name in delete_names:
-                        names_list.remove(idx)
+        applied_layers, touched_cols = colm.apply_collection_settings(sc, targets, settings)
 
         try:
             context.view_layer.update()
         except Exception:
             pass
 
-        detail = []
-        if applied_layers:
-            layer_txt = ", ".join([f"{nm}({len(cols)}件)" for nm, cols in applied_layers])
-            cols_txt = ", ".join(touched_cols) if touched_cols else "なし"
-            detail.append(f"設定: {layer_txt} / 変更コレクション: {cols_txt}")
-        if rename_applied:
-            detail.append(f"名前変更: {', '.join(rename_applied)}")
-        if deleted:
-            detail.append(f"削除: {', '.join(deleted)}")
-        if rename_skipped or delete_failed:
-            skipped_txt = ", ".join(rename_skipped) if rename_skipped else "なし"
-            failed_txt = ", ".join(delete_failed) if delete_failed else "なし"
-            detail.append(f"失敗: 名前変更({skipped_txt}) / 削除({failed_txt})")
-
-        if not detail:
+        if not applied_layers:
             self.report({'WARNING'}, "適用できるコレクションが見つかりませんでした")
             return {'CANCELLED'}
 
-        self.report({'INFO'}, " / ".join(detail))
+        layer_txt = ", ".join([f"{nm}({len(cols)}件)" for nm, cols in applied_layers])
+        cols_txt = ", ".join(touched_cols) if touched_cols else "なし"
+        self.report({'INFO'}, f"設定を適用: {layer_txt} / 変更コレクション: {cols_txt}")
         return {'FINISHED'}
 
 
@@ -868,6 +776,8 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
 
             entry = layers.add()
             entry.name = vl.name
+            entry.rename_to = ""
+            entry.delete_layer = False
 
             entry.engine_enable = bool(getattr(rs, "engine_enable", False))
             entry.engine = getattr(rs, "engine", entry.engine)
@@ -911,6 +821,14 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             name_cell = row.row(align=True)
             name_cell.ui_units_x = 8.0
             name_cell.label(text=entry.name, icon='RENDERLAYERS')
+
+            rename_cell = row.row(align=True)
+            rename_cell.ui_units_x = 6.0
+            rename_cell.prop(entry, "rename_to", text="変更名")
+
+            delete_cell = row.row(align=True)
+            delete_cell.ui_units_x = 2.0
+            delete_cell.prop(entry, "delete_layer", text="削除")
 
             erow = row.row(align=True)
             erow.prop(entry, "engine_enable", text="")
@@ -968,7 +886,17 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             self.report({'ERROR'}, "レンダー設定を取得できませんでした")
             return {'CANCELLED'}
 
+        rename_map = {}
+        delete_names = set()
         for entry in layers:
+            if entry.delete_layer:
+                delete_names.add(entry.name)
+                continue
+
+            rename_to = (entry.rename_to or "").strip()
+            if rename_to and rename_to != entry.name:
+                rename_map[entry.name] = rename_to
+
             vl = sc.view_layers.get(entry.name)
             if vl is None:
                 continue
@@ -1004,16 +932,57 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
 
             applied.append(entry.name)
 
+        rename_applied = []
+        rename_skipped = []
+        for old_name, new_name in rename_map.items():
+            vl = sc.view_layers.get(old_name)
+            if vl is None:
+                rename_skipped.append(old_name)
+                continue
+            if sc.view_layers.get(new_name) and new_name != old_name:
+                rename_skipped.append(old_name)
+                continue
+            vl.name = new_name
+            rename_applied.append(f"{old_name}→{new_name}")
+
+        deleted = []
+        delete_failed = []
+        for name in sorted(delete_names):
+            if name == "View Layer" and len(sc.view_layers) == 1:
+                delete_failed.append(name)
+                continue
+            vl = sc.view_layers.get(name)
+            if vl is None:
+                delete_failed.append(name)
+                continue
+            try:
+                sc.view_layers.remove(vl)
+                deleted.append(name)
+            except Exception:
+                delete_failed.append(name)
+
         if not applied:
-            self.report({'WARNING'}, "適用できるビューレイヤーがありません")
-            return {'CANCELLED'}
+            if not rename_applied and not deleted and not rename_skipped and not delete_failed:
+                self.report({'WARNING'}, "適用できるビューレイヤーがありません")
+                return {'CANCELLED'}
 
         try:
             ro.apply_render_override(sc, context.view_layer)
         except Exception:
             pass
 
-        self.report({'INFO'}, f"レンダー設定を適用: {', '.join(applied)}")
+        detail = []
+        if applied:
+            detail.append(f"レンダー設定: {', '.join(applied)}")
+        if rename_applied:
+            detail.append(f"名前変更: {', '.join(rename_applied)}")
+        if deleted:
+            detail.append(f"削除: {', '.join(deleted)}")
+        if rename_skipped or delete_failed:
+            skipped_txt = ", ".join(rename_skipped) if rename_skipped else "なし"
+            failed_txt = ", ".join(delete_failed) if delete_failed else "なし"
+            detail.append(f"失敗: 名前変更({skipped_txt}) / 削除({failed_txt})")
+        self.report({'INFO'}, " / ".join(detail))
         return {'FINISHED'}
 
 
