@@ -44,7 +44,7 @@ def _ensure_header_visible(screen):
 # --------------------------------------------------
 # ビューレイヤー操作オペレーター
 # --------------------------------------------------
-def _apply_content_collection_overrides(view_layer):
+def _sync_content_collection_list(view_layer):
     if not getattr(view_layer, "vlm_content_switch_enable", False):
         return False
 
@@ -69,7 +69,18 @@ def _apply_content_collection_overrides(view_layer):
         for name in sorted(current_on):
             item = stored_list.add()
             item.name = name
-        stored_names = current_on
+    return True
+
+
+def _apply_content_collection_overrides(view_layer):
+    if not getattr(view_layer, "vlm_content_switch_enable", False):
+        return False
+
+    _sync_content_collection_list(view_layer)
+    stored_names = {
+        item.name for item in getattr(view_layer, "vlm_content_collection_names", [])
+        if getattr(item, "name", "")
+    }
 
     def _walk(lc):
         if lc.collection.name not in {"Scene Collection", "シーンコレクション"}:
@@ -145,6 +156,9 @@ class VLM_OT_set_active_viewlayer(bpy.types.Operator):
             except Exception:
                 # 万一失敗しても作業を止めない（安全にスルー）
                 pass
+
+        # 1) 現在のビューレイヤーの状態を保存
+        _sync_content_collection_list(context.window.view_layer)
 
         # 1) ビューレイヤーを切り替え
         context.window.view_layer = dest_vl
