@@ -318,13 +318,19 @@ classes = (
     VLM_OT_toggle_layercollection_flag,  # ← これを追加
 )
 def register():
+    global _last_view_layer_name
     for c in classes:
         bpy.utils.register_class(c)
+    win = getattr(bpy.context, "window", None)
+    if win and getattr(win, "view_layer", None):
+        _last_view_layer_name = win.view_layer.name
     if _viewlayer_switch_handler not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(_viewlayer_switch_handler)
 
 def unregister():
+    global _last_view_layer_name
     if _viewlayer_switch_handler in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_viewlayer_switch_handler)
+    _last_view_layer_name = None
     for c in reversed(classes):
         bpy.utils.unregister_class(c)
