@@ -38,8 +38,14 @@ class VLM_PG_collection_toggle(bpy.types.PropertyGroup):
     level: bpy.props.IntProperty(name="Depth", default=0)
 
 
+class VLM_PG_collection_name(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(name="Collection Name")
+
+
 class VLM_PG_render_layer_entry(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(name="ViewLayer Name")
+    rename_to: bpy.props.StringProperty(name="変更名")
+    delete_layer: bpy.props.BoolProperty(name="削除", default=False)
 
     engine_enable: bpy.props.BoolProperty(name="エンジンを上書き", default=False)
     engine: bpy.props.EnumProperty(name="エンジン", items=ro.ENGINES, default="BLENDER_EEVEE_NEXT")
@@ -73,13 +79,58 @@ def _gather_shader_aovs_from_tree(nt, visited):
         return {}
     visited.add(nt)
 
+    def _get_shader_aov_output_name(node):
+        """
+        ShaderNodeOutputAOV から「AOV名」をできるだけ確実に取得する。
+        Blenderのバージョン差で識別子が変わっても拾えるように、RNAから探索する。
+        """
+        for attr in ("aov_name", "aov", "aov_output_name", "aov_pass_name"):
+            if hasattr(node, attr):
+                val = (getattr(node, attr, "") or "").strip()
+                if val:
+                    return val
+
+        try:
+            rna_props = getattr(node, "bl_rna", None).properties
+        except Exception:
+            rna_props = None
+
+        if rna_props:
+            candidates = []
+            for prop in rna_props:
+                try:
+                    pid = (prop.identifier or "").lower()
+                    ptype = getattr(prop, "type", "")
+                except Exception:
+                    continue
+
+                if ptype != 'STRING':
+                    continue
+                if "aov" in pid and "name" in pid:
+                    candidates.append(prop.identifier)
+
+            for pid in sorted(set(candidates)):
+                try:
+                    val = (getattr(node, pid, "") or "").strip()
+                except Exception:
+                    continue
+                if val:
+                    return val
+
+        raw = (getattr(node, "name", "") or "").strip()
+        if raw.startswith("Shader AOV Output "):
+            raw = raw.replace("Shader AOV Output ", "", 1).strip()
+        if raw:
+            return raw
+
+        raw = (getattr(node, "label", "") or "").strip()
+        return raw or ""
+
     found = {}
     for node in getattr(nt, "nodes", []):
         # シェーダー AOV 出力
         if getattr(node, "bl_idname", "") == "ShaderNodeOutputAOV":
-            raw = (getattr(node, "name", "") or "").strip()
-            if not raw:
-                raw = (getattr(node, "label", "") or "").strip()
+            raw = _get_shader_aov_output_name(node)
             if raw:
                 aov_type = getattr(node, "type", "COLOR") or "COLOR"
                 # 既に同名があれば最初のタイプを優先
@@ -409,6 +460,127 @@ class VLM_OT_duplicate_viewlayers_popup(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class VLM_OT_create_viewlayers_from_collections_popup(bpy.types.Operator):
+    bl_idname = "vlm.create_viewlayers_from_collections_popup"
+    bl_label  = "コレクションからビューレイヤー作成"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    collections_to_create: bpy.props.CollectionProperty(type=VLM_PG_collection_toggle)
+    extra_content_on: bpy.props.CollectionProperty(type=VLM_PG_collection_toggle)
+    name_prefix: bpy.props.StringProperty(name="プレフィックス", description="名前の頭に付ける文字列")
+    name_suffix: bpy.props.StringProperty(name="サフィックス", description="名前の末尾に付ける文字列")
+
+    def _collect_layer_collections(self, lc, level=0):
+        if lc.collection.name in {"Scene Collection", "シーンコレクション"}:
+            for child in lc.children:
+                self._collect_layer_collections(child, level)
+            return
+
+        item = self.collections_to_create.add()
+        item.name = lc.collection.name
+        item.level = level
+        item.enabled = False
+
+        extra = self.extra_content_on.add()
+        extra.name = lc.collection.name
+        extra.level = level
+        extra.enabled = False
+
+        for child in lc.children:
+            self._collect_layer_collections(child, level + 1)
+
+    def invoke(self, context, event):
+        self.collections_to_create.clear()
+        self.extra_content_on.clear()
+
+        if context.view_layer:
+            self._collect_layer_collections(context.view_layer.layer_collection, 0)
+
+        return context.window_manager.invoke_props_dialog(self, width=460)
+
+    def draw(self, context):
+        layout = self.layout
+
+        layout.label(text="名前付け (任意)", icon='SORTALPHA')
+        name_box = layout.box()
+        row = name_box.row(align=True)
+        row.prop(self, "name_prefix", text="プレフィックス")
+        row.prop(self, "name_suffix", text="サフィックス")
+
+        layout.separator()
+        layout.label(text="ビューレイヤー作成用コレクション", icon='OUTLINER_COLLECTION')
+        cbox = layout.box()
+        for coll in self.collections_to_create:
+            row = cbox.row(align=True)
+            row.separator(factor=0.4 + 0.2 * coll.level)
+            row.separator(factor=0.8 + 0.4 * coll.level)
+            row.prop(coll, "enabled", text="", toggle=True)
+            row.label(text=coll.name, icon='OUTLINER_COLLECTION')
+
+        layout.separator()
+        layout.label(text="追加で内容をONにするコレクション", icon='OUTLINER_COLLECTION')
+        ebox = layout.box()
+        for coll in self.extra_content_on:
+            row = ebox.row(align=True)
+            row.separator(factor=0.4 + 0.2 * coll.level)
+            row.separator(factor=0.8 + 0.4 * coll.level)
+            row.prop(coll, "enabled", text="", toggle=True)
+            row.label(text=coll.name, icon='OUTLINER_COLLECTION')
+
+        info = layout.box()
+        info.label(text="作成VLは、選択コレクション＋追加ONのみ内容ONになります。", icon='INFO')
+
+    def execute(self, context):
+        sc = context.scene
+        source_vl = context.view_layer
+        if not source_vl:
+            self.report({'WARNING'}, "アクティブなビューレイヤーがありません")
+            return {'CANCELLED'}
+
+        selected = [c.name for c in self.collections_to_create if c.enabled]
+        if not selected:
+            self.report({'WARNING'}, "作成するコレクションを選択してください")
+            return {'CANCELLED'}
+
+        all_names = [c.name for c in self.collections_to_create]
+        extra_on = {c.name for c in self.extra_content_on if c.enabled}
+        prefix = self.name_prefix or ""
+        suffix = self.name_suffix or ""
+
+        created = []
+        for coll_name in selected:
+            base_name = f"{prefix}{coll_name}{suffix}"
+            content_on = {coll_name} | extra_on
+            states = {name: (name in content_on) for name in all_names}
+
+            new_vl = colm.duplicate_view_layer_with_collections(
+                sc,
+                source_vl,
+                collection_states=states,
+                desired_name=base_name,
+            )
+            if not new_vl:
+                continue
+
+            if hasattr(new_vl, "vlm_content_switch_enable"):
+                new_vl.vlm_content_switch_enable = True
+            if hasattr(new_vl, "vlm_content_collection_names"):
+                new_vl.vlm_content_collection_names.clear()
+                for name in sorted(content_on):
+                    item = new_vl.vlm_content_collection_names.add()
+                    item.name = name
+
+            created.append(new_vl.name)
+
+        if not created:
+            self.report({'WARNING'}, "ビューレイヤーの作成に失敗しました")
+            return {'CANCELLED'}
+
+        created_txt = ", ".join(created)
+        self.report({'INFO'}, f"作成完了: {created_txt}")
+        return {'FINISHED'}
+
+
 class VLM_OT_apply_collection_settings_popup(bpy.types.Operator):
     bl_idname = "vlm.apply_collection_settings_popup"
     bl_label  = "コレクション設定を一括適用"
@@ -604,6 +776,8 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
 
             entry = layers.add()
             entry.name = vl.name
+            entry.rename_to = ""
+            entry.delete_layer = False
 
             entry.engine_enable = bool(getattr(rs, "engine_enable", False))
             entry.engine = getattr(rs, "engine", entry.engine)
@@ -647,6 +821,14 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             name_cell = row.row(align=True)
             name_cell.ui_units_x = 8.0
             name_cell.label(text=entry.name, icon='RENDERLAYERS')
+
+            rename_cell = row.row(align=True)
+            rename_cell.ui_units_x = 6.0
+            rename_cell.prop(entry, "rename_to", text="変更名")
+
+            delete_cell = row.row(align=True)
+            delete_cell.ui_units_x = 2.0
+            delete_cell.prop(entry, "delete_layer", text="削除")
 
             erow = row.row(align=True)
             erow.prop(entry, "engine_enable", text="")
@@ -704,7 +886,17 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             self.report({'ERROR'}, "レンダー設定を取得できませんでした")
             return {'CANCELLED'}
 
+        rename_map = {}
+        delete_names = set()
         for entry in layers:
+            if entry.delete_layer:
+                delete_names.add(entry.name)
+                continue
+
+            rename_to = (entry.rename_to or "").strip()
+            if rename_to and rename_to != entry.name:
+                rename_map[entry.name] = rename_to
+
             vl = sc.view_layers.get(entry.name)
             if vl is None:
                 continue
@@ -740,16 +932,57 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
 
             applied.append(entry.name)
 
+        rename_applied = []
+        rename_skipped = []
+        for old_name, new_name in rename_map.items():
+            vl = sc.view_layers.get(old_name)
+            if vl is None:
+                rename_skipped.append(old_name)
+                continue
+            if sc.view_layers.get(new_name) and new_name != old_name:
+                rename_skipped.append(old_name)
+                continue
+            vl.name = new_name
+            rename_applied.append(f"{old_name}→{new_name}")
+
+        deleted = []
+        delete_failed = []
+        for name in sorted(delete_names):
+            if name == "View Layer" and len(sc.view_layers) == 1:
+                delete_failed.append(name)
+                continue
+            vl = sc.view_layers.get(name)
+            if vl is None:
+                delete_failed.append(name)
+                continue
+            try:
+                sc.view_layers.remove(vl)
+                deleted.append(name)
+            except Exception:
+                delete_failed.append(name)
+
         if not applied:
-            self.report({'WARNING'}, "適用できるビューレイヤーがありません")
-            return {'CANCELLED'}
+            if not rename_applied and not deleted and not rename_skipped and not delete_failed:
+                self.report({'WARNING'}, "適用できるビューレイヤーがありません")
+                return {'CANCELLED'}
 
         try:
             ro.apply_render_override(sc, context.view_layer)
         except Exception:
             pass
 
-        self.report({'INFO'}, f"レンダー設定を適用: {', '.join(applied)}")
+        detail = []
+        if applied:
+            detail.append(f"レンダー設定: {', '.join(applied)}")
+        if rename_applied:
+            detail.append(f"名前変更: {', '.join(rename_applied)}")
+        if deleted:
+            detail.append(f"削除: {', '.join(deleted)}")
+        if rename_skipped or delete_failed:
+            skipped_txt = ", ".join(rename_skipped) if rename_skipped else "なし"
+            failed_txt = ", ".join(delete_failed) if delete_failed else "なし"
+            detail.append(f"失敗: 名前変更({skipped_txt}) / 削除({failed_txt})")
+        self.report({'INFO'}, " / ".join(detail))
         return {'FINISHED'}
 
 
@@ -831,6 +1064,7 @@ class VLM_PT_panel(bpy.types.Panel):
 
         dup_row = layout.row(align=True)
         dup_row.operator("vlm.duplicate_viewlayers_popup", icon='DUPLICATE')
+        dup_row.operator("vlm.create_viewlayers_from_collections_popup", icon='OUTLINER_COLLECTION')
         dup_row.operator("vlm.apply_collection_settings_popup", icon='MODIFIER_ON')
         dup_row.operator("vlm.apply_render_settings_popup", icon='RENDER_STILL')
 
@@ -928,6 +1162,65 @@ class VLM_PT_panel(bpy.types.Panel):
             if vlayers and context.view_layer.name == vlayers[0].name:
                 hint = box.box()
                 hint.label(text="先頭レイヤーのサンプル数は、他レイヤーのフォールバック値として使われます。", icon='INFO')
+
+            layout.separator()
+
+        # ─────────────────────────────────────────
+        # ④ Cycles ライトパス
+        # ─────────────────────────────────────────
+        if _fold(layout, sc, "vlm_ui_show_cycles_light_paths", "Cycles ライトパス"):
+            vrs = getattr(context.view_layer, "vlm_render", None)
+            if vrs is None:
+                layout.label(text="(vlm_render が未登録です)", icon='ERROR')
+            else:
+                row = layout.row(align=True)
+                row.enabled = not is_top_layer
+                row.prop(vrs, "light_paths_enable", text="このレイヤーの設定を使用")
+
+                col = layout.column(align=True)
+                col.enabled = (is_top_layer or bool(getattr(vrs, "light_paths_enable", False)))
+
+                if getattr(vrs, "engine", "") != "CYCLES":
+                    warn = col.box()
+                    warn.label(text="Cycles 選択時のみ有効です", icon='INFO')
+
+                max_box = col.box()
+                max_box.label(text="最大バウンス数")
+                max_box.prop(vrs, "light_path_max_bounces", text="合計")
+                max_box.prop(vrs, "light_path_diffuse_bounces", text="ディフューズ")
+                max_box.prop(vrs, "light_path_glossy_bounces", text="光沢")
+                max_box.prop(vrs, "light_path_transmission_bounces", text="伝播")
+                max_box.prop(vrs, "light_path_volume_bounces", text="ボリューム")
+                max_box.prop(vrs, "light_path_transparent_bounces", text="透過")
+
+                clamp_box = col.box()
+                clamp_box.label(text="制限")
+                clamp_box.prop(vrs, "light_path_clamp_direct", text="直接照明")
+                clamp_box.prop(vrs, "light_path_clamp_indirect", text="間接照明")
+
+                caustics_box = col.box()
+                caustics_box.label(text="コースティクス")
+                caustics_box.prop(vrs, "light_path_filter_glossy", text="光沢フィルター")
+                caustics_row = caustics_box.row(align=True)
+                caustics_row.prop(vrs, "light_path_caustics_reflective", text="反射")
+                caustics_row.prop(vrs, "light_path_caustics_refractive", text="屈折")
+
+                fast_gi_box = col.box()
+                fast_gi_head = fast_gi_box.row(align=True)
+                fast_gi_head.prop(vrs, "fast_gi_use", text="高速 GI 近似")
+                fast_gi_toggle = fast_gi_head.row(align=True)
+                fast_gi_toggle.enabled = not is_top_layer
+                fast_gi_toggle.prop(vrs, "fast_gi_enable", text="このレイヤーの設定を使用")
+
+                fast_gi_body = fast_gi_box.column(align=True)
+                fast_gi_body.enabled = bool(getattr(vrs, "fast_gi_use", False)) and (
+                    is_top_layer or bool(getattr(vrs, "fast_gi_enable", False))
+                )
+                fast_gi_body.prop(vrs, "fast_gi_method", text="方式")
+                fast_gi_body.prop(vrs, "fast_gi_ao_factor", text="AOの係数")
+                fast_gi_body.prop(vrs, "fast_gi_ao_distance", text="AOの距離")
+                fast_gi_body.prop(vrs, "fast_gi_viewport_bounces", text="ビューポートバウンス")
+                fast_gi_body.prop(vrs, "fast_gi_render_bounces", text="レンダーバウンス数")
 
             layout.separator()
 
@@ -1127,10 +1420,12 @@ def register():
         VLM_PG_viewlayer_target,
         VLM_PG_collection_multi_state,
         VLM_PG_collection_toggle,
+        VLM_PG_collection_name,
         VLM_PG_render_layer_entry,
         VLM_OT_add_shader_aovs,
         VLM_OT_prepare_output_nodes_plus,
         VLM_OT_duplicate_viewlayers_popup,
+        VLM_OT_create_viewlayers_from_collections_popup,
         VLM_OT_apply_collection_settings_popup,
         VLM_OT_apply_render_settings_popup,
         VLM_PT_panel,
@@ -1148,6 +1443,15 @@ def register():
     bpy.types.WindowManager.vlm_render_layers = bpy.props.CollectionProperty(
         type=VLM_PG_render_layer_entry,
     )
+
+    bpy.types.ViewLayer.vlm_content_switch_enable = bpy.props.BoolProperty(
+        name="Manage Collection Content On Switch",
+        description="ビューレイヤー切り替え時に内容ON/OFFを自動設定",
+        default=False,
+    )
+    bpy.types.ViewLayer.vlm_content_collection_names = bpy.props.CollectionProperty(
+        type=VLM_PG_collection_name,
+    )
     
     if not hasattr(bpy.types.Scene, "vlm_ui_show_world"):
         bpy.types.Scene.vlm_ui_show_world = bpy.props.BoolProperty(
@@ -1162,10 +1466,12 @@ def unregister():
         VLM_PT_panel,
         VLM_OT_apply_render_settings_popup,
         VLM_OT_apply_collection_settings_popup,
+        VLM_OT_create_viewlayers_from_collections_popup,
         VLM_OT_duplicate_viewlayers_popup,
         VLM_OT_prepare_output_nodes_plus,
         VLM_OT_add_shader_aovs,
         VLM_PG_render_layer_entry,
+        VLM_PG_collection_name,
         VLM_PG_collection_toggle,
         VLM_PG_collection_multi_state,
         VLM_PG_viewlayer_target,
@@ -1175,3 +1481,7 @@ def unregister():
         del bpy.types.Scene.vlm_enable_ao_multiply
     if hasattr(bpy.types.Scene, "vlm_ui_show_world"):
         del bpy.types.Scene.vlm_ui_show_world
+    if hasattr(bpy.types.ViewLayer, "vlm_content_switch_enable"):
+        del bpy.types.ViewLayer.vlm_content_switch_enable
+    if hasattr(bpy.types.ViewLayer, "vlm_content_collection_names"):
+        del bpy.types.ViewLayer.vlm_content_collection_names

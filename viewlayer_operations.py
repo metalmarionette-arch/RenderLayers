@@ -44,6 +44,25 @@ def _ensure_header_visible(screen):
 # --------------------------------------------------
 # ビューレイヤー操作オペレーター
 # --------------------------------------------------
+def _apply_content_collection_overrides(view_layer):
+    if not getattr(view_layer, "vlm_content_switch_enable", False):
+        return False
+
+    names = {
+        item.name for item in getattr(view_layer, "vlm_content_collection_names", [])
+        if getattr(item, "name", "")
+    }
+
+    def _walk(lc):
+        if lc.collection.name not in {"Scene Collection", "シーンコレクション"}:
+            lc.exclude = lc.collection.name not in names
+        for child in lc.children:
+            _walk(child)
+
+    _walk(view_layer.layer_collection)
+    return True
+
+
 class VLM_OT_toggle_collection_in_viewlayer(bpy.types.Operator):
     bl_idname = "vlm.toggle_collection_in_viewlayer"
     bl_label  = "コレクション追加 / 除外"
@@ -111,6 +130,13 @@ class VLM_OT_set_active_viewlayer(bpy.types.Operator):
 
         # 1) ビューレイヤーを切り替え
         context.window.view_layer = dest_vl
+
+        # 1.5) コレクション内容のON/OFFを反映（必要なレイヤーのみ）
+        if _apply_content_collection_overrides(dest_vl):
+            try:
+                dest_vl.update()
+            except Exception:
+                pass
 
         # 2) 各種オーバーライドを適用（従来のまま）
         material_override.apply_active_viewlayer_overrides(context)
