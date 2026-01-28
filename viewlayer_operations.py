@@ -1,5 +1,7 @@
 import bpy
 
+_last_view_layer_name = None
+
 # --------------------------------------------------
 # LayerCollection 検索・操作ユーティリティ
 # --------------------------------------------------
@@ -90,6 +92,28 @@ def _apply_content_collection_overrides(view_layer):
 
     _walk(view_layer.layer_collection)
     return True
+
+
+def _viewlayer_switch_handler(scene, depsgraph):
+    global _last_view_layer_name
+    win = getattr(bpy.context, "window", None)
+    if win is None:
+        return
+    current = getattr(win, "view_layer", None)
+    if current is None:
+        return
+
+    if _last_view_layer_name is None:
+        _last_view_layer_name = current.name
+        return
+
+    if current.name == _last_view_layer_name:
+        return
+
+    prev = scene.view_layers.get(_last_view_layer_name)
+    if prev:
+        _sync_content_collection_list(prev)
+    _last_view_layer_name = current.name
 
 
 class VLM_OT_toggle_collection_in_viewlayer(bpy.types.Operator):
@@ -296,7 +320,11 @@ classes = (
 def register():
     for c in classes:
         bpy.utils.register_class(c)
+    if _viewlayer_switch_handler not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_viewlayer_switch_handler)
 
 def unregister():
+    if _viewlayer_switch_handler in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_viewlayer_switch_handler)
     for c in reversed(classes):
         bpy.utils.unregister_class(c)
