@@ -1,5 +1,7 @@
 import bpy
 
+_last_view_layer_name = None
+
 # --------------------------------------------------
 # LayerCollection 検索・操作ユーティリティ
 # --------------------------------------------------
@@ -44,6 +46,76 @@ def _ensure_header_visible(screen):
 # --------------------------------------------------
 # ビューレイヤー操作オペレーター
 # --------------------------------------------------
+def _sync_content_collection_list(view_layer):
+    if not getattr(view_layer, "vlm_content_switch_enable", False):
+        return False
+
+    stored_list = getattr(view_layer, "vlm_content_collection_names", [])
+    stored_names = {
+        item.name for item in stored_list
+        if getattr(item, "name", "")
+    }
+
+    current_on = set()
+    def _gather(lc):
+        if lc.collection.name not in {"Scene Collection", "シーンコレクション"}:
+            if not lc.exclude:
+                current_on.add(lc.collection.name)
+        for child in lc.children:
+            _gather(child)
+
+    _gather(view_layer.layer_collection)
+
+    if current_on != stored_names:
+        stored_list.clear()
+        for name in sorted(current_on):
+            item = stored_list.add()
+            item.name = name
+    return True
+
+
+def _apply_content_collection_overrides(view_layer):
+    if not getattr(view_layer, "vlm_content_switch_enable", False):
+        return False
+
+    _sync_content_collection_list(view_layer)
+    stored_names = {
+        item.name for item in getattr(view_layer, "vlm_content_collection_names", [])
+        if getattr(item, "name", "")
+    }
+
+    def _walk(lc):
+        if lc.collection.name not in {"Scene Collection", "シーンコレクション"}:
+            lc.exclude = lc.collection.name not in stored_names
+        for child in lc.children:
+            _walk(child)
+
+    _walk(view_layer.layer_collection)
+    return True
+
+
+def _viewlayer_switch_handler(scene, depsgraph):
+    global _last_view_layer_name
+    win = getattr(bpy.context, "window", None)
+    if win is None:
+        return
+    current = getattr(win, "view_layer", None)
+    if current is None:
+        return
+
+    if _last_view_layer_name is None:
+        _last_view_layer_name = current.name
+        return
+
+    if current.name == _last_view_layer_name:
+        return
+
+    prev = scene.view_layers.get(_last_view_layer_name)
+    if prev:
+        _sync_content_collection_list(prev)
+    _last_view_layer_name = current.name
+
+
 class VLM_OT_toggle_collection_in_viewlayer(bpy.types.Operator):
     bl_idname = "vlm.toggle_collection_in_viewlayer"
     bl_label  = "コレクション追加 / 除外"
@@ -109,8 +181,18 @@ class VLM_OT_set_active_viewlayer(bpy.types.Operator):
                 # 万一失敗しても作業を止めない（安全にスルー）
                 pass
 
+        # 1) 現在のビューレイヤーの状態を保存
+        _sync_content_collection_list(context.window.view_layer)
+
         # 1) ビューレイヤーを切り替え
         context.window.view_layer = dest_vl
+
+        # 1.5) コレクション内容のON/OFFを反映（必要なレイヤーのみ）
+        if _apply_content_collection_overrides(dest_vl):
+            try:
+                dest_vl.update()
+            except Exception:
+                pass
 
         # 2) 各種オーバーライドを適用（従来のまま）
         material_override.apply_active_viewlayer_overrides(context)
@@ -236,9 +318,19 @@ classes = (
     VLM_OT_toggle_layercollection_flag,  # ← これを追加
 )
 def register():
+    global _last_view_layer_name
     for c in classes:
         bpy.utils.register_class(c)
+    win = getattr(bpy.context, "window", None)
+    if win and getattr(win, "view_layer", None):
+        _last_view_layer_name = win.view_layer.name
+    if _viewlayer_switch_handler not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_viewlayer_switch_handler)
 
 def unregister():
+    global _last_view_layer_name
+    if _viewlayer_switch_handler in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_viewlayer_switch_handler)
+    _last_view_layer_name = None
     for c in reversed(classes):
         bpy.utils.unregister_class(c)
