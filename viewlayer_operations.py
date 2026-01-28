@@ -48,14 +48,32 @@ def _apply_content_collection_overrides(view_layer):
     if not getattr(view_layer, "vlm_content_switch_enable", False):
         return False
 
-    names = {
-        item.name for item in getattr(view_layer, "vlm_content_collection_names", [])
+    stored_list = getattr(view_layer, "vlm_content_collection_names", [])
+    stored_names = {
+        item.name for item in stored_list
         if getattr(item, "name", "")
     }
 
+    current_on = set()
+    def _gather(lc):
+        if lc.collection.name not in {"Scene Collection", "シーンコレクション"}:
+            if not lc.exclude:
+                current_on.add(lc.collection.name)
+        for child in lc.children:
+            _gather(child)
+
+    _gather(view_layer.layer_collection)
+
+    if current_on != stored_names:
+        stored_list.clear()
+        for name in sorted(current_on):
+            item = stored_list.add()
+            item.name = name
+        stored_names = current_on
+
     def _walk(lc):
         if lc.collection.name not in {"Scene Collection", "シーンコレクション"}:
-            lc.exclude = lc.collection.name not in names
+            lc.exclude = lc.collection.name not in stored_names
         for child in lc.children:
             _walk(child)
 
