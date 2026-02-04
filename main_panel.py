@@ -1083,6 +1083,8 @@ class VLM_PT_panel(bpy.types.Panel):
             row.operator("vlm.backup_materials_current", icon='FILE_TICK', text="今の見た目を保存")
             row.operator("vlm.backup_materials_base",    icon='FILE_TICK', text="ベース状態を保存")
             row.operator("vlm.clear_backup_materials",   icon='TRASH',     text="クリア")
+            row = layout.row(align=True)
+            row.operator("vlm.set_fake_user_all_materials", icon='FUND', text="全マテリアルにFake User")
             layout.separator()
 
         # ─────────────────────────────────────────
