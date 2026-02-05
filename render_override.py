@@ -311,18 +311,11 @@ class VLM_RenderSettings(PropertyGroup):
         default=False,
         update=_update_render_settings
     )
-    overscan_resolution_x: IntProperty(
-        name="Overscan X",
-        default=1920,
-        min=1,
-        max=16384,
-        update=_update_render_settings,
-    )
-    overscan_resolution_y: IntProperty(
-        name="Overscan Y",
-        default=1080,
-        min=1,
-        max=16384,
+    overscan_scale: IntProperty(
+        name="Overscan Scale (%)",
+        default=110,
+        min=100,
+        max=1000,
         update=_update_render_settings,
     )
     aspect_x: FloatProperty(name="アスペクト X", default=1.0, min=0.1, update=_update_render_settings)
@@ -377,8 +370,7 @@ def sync_scene_settings_to_addon(scene):
         rs.resolution_x = r.resolution_x
         rs.resolution_y = r.resolution_y
         rs.resolution_percentage = r.resolution_percentage
-        rs.overscan_resolution_x = r.resolution_x
-        rs.overscan_resolution_y = r.resolution_y
+        rs.overscan_scale = 100
         rs.aspect_x = r.pixel_aspect_x
         rs.aspect_y = r.pixel_aspect_y
         # `fps` と `fps_base` から実際のフレームレートを計算して反映
@@ -549,8 +541,10 @@ def apply_render_override(scene: bpy.types.Scene,
     cam_obj = scene.camera
     cam_data = cam_obj.data if cam_obj and hasattr(cam_obj, "data") else None
     if getattr(fmt, "overscan_enable", False):
-        over_x = min(max(1, int(getattr(fmt, "overscan_resolution_x", base_res_x))), max_dim)
-        over_y = min(max(1, int(getattr(fmt, "overscan_resolution_y", base_res_y))), max_dim)
+        overscan_scale = max(100, min(int(getattr(fmt, "overscan_scale", 100)), 1000))
+        scale_factor = overscan_scale / 100.0
+        over_x = min(max(1, int(round(base_res_x * scale_factor))), max_dim)
+        over_y = min(max(1, int(round(base_res_y * scale_factor))), max_dim)
         r.resolution_x = over_x
         r.resolution_y = over_y
         r.resolution_percentage = 100
@@ -561,9 +555,6 @@ def apply_render_override(scene: bpy.types.Scene,
                 base_angle = cam_data.angle
                 cam_data["vlm_overscan_base_angle"] = float(base_angle)
 
-            scale_x = over_x / float(base_res_x)
-            scale_y = over_y / float(base_res_y)
-            scale_factor = max(scale_x, scale_y)
             new_angle = 2.0 * math.atan(math.tan(base_angle / 2.0) * scale_factor)
             cam_data.angle = new_angle
     else:
