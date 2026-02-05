@@ -804,7 +804,7 @@ class VLM_OT_apply_render_settings_popup(bpy.types.Operator):
             entry.frame_end = getattr(rs, "frame_end", sc.frame_end)
             entry.frame_step = getattr(rs, "frame_step", sc.frame_step)
 
-        return context.window_manager.invoke_props_dialog(self, width=980)
+        return context.window_manager.invoke_props_dialog(self, width=1960)
 
     def draw(self, context):
         layout = self.layout
@@ -1062,11 +1062,11 @@ class VLM_PT_panel(bpy.types.Panel):
                 op = row.operator("vlm.set_active_viewlayer", text="", icon='RADIOBUT_OFF', emboss=False)
                 op.layer_name = v.name
 
-        dup_row = layout.row(align=True)
-        dup_row.operator("vlm.duplicate_viewlayers_popup", icon='DUPLICATE')
-        dup_row.operator("vlm.create_viewlayers_from_collections_popup", icon='OUTLINER_COLLECTION')
-        dup_row.operator("vlm.apply_collection_settings_popup", icon='MODIFIER_ON')
-        dup_row.operator("vlm.apply_render_settings_popup", icon='RENDER_STILL')
+        dup_col = layout.column(align=True)
+        dup_col.operator("vlm.duplicate_viewlayers_popup", icon='DUPLICATE')
+        dup_col.operator("vlm.create_viewlayers_from_collections_popup", icon='OUTLINER_COLLECTION')
+        dup_col.operator("vlm.apply_collection_settings_popup", icon='MODIFIER_ON')
+        dup_col.operator("vlm.apply_render_settings_popup", icon='RENDER_STILL')
 
         layout.separator()
 
@@ -1083,6 +1083,8 @@ class VLM_PT_panel(bpy.types.Panel):
             row.operator("vlm.backup_materials_current", icon='FILE_TICK', text="今の見た目を保存")
             row.operator("vlm.backup_materials_base",    icon='FILE_TICK', text="ベース状態を保存")
             row.operator("vlm.clear_backup_materials",   icon='TRASH',     text="クリア")
+            row = layout.row(align=True)
+            row.operator("vlm.set_fake_user_all_materials", icon='FUND', text="全マテリアルにFake User")
             layout.separator()
 
         # ─────────────────────────────────────────
@@ -1285,6 +1287,10 @@ class VLM_PT_panel(bpy.types.Panel):
                 col.prop(vrs, "resolution_x",          text="解像度 X")
                 col.prop(vrs, "resolution_y",          text="解像度 Y")
                 col.prop(vrs, "resolution_percentage", text="Scale (%)")
+                col.prop(vrs, "overscan_enable", text="Overscanでレンダリング")
+                over = col.column(align=True)
+                over.enabled = bool(vrs.overscan_enable)
+                over.prop(vrs, "overscan_scale", text="Overscan Scale (%)")
                 col.prop(vrs, "aspect_x",              text="アスペクト X")
                 col.prop(vrs, "aspect_y",              text="アスペクト Y")
                 col.prop(vrs, "frame_rate",            text="FPS")

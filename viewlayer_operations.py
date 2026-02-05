@@ -63,6 +63,29 @@ def _apply_content_collection_overrides(view_layer):
     return True
 
 
+def _sync_content_collection_names(view_layer):
+    if not getattr(view_layer, "vlm_content_switch_enable", False):
+        return False
+    if not hasattr(view_layer, "vlm_content_collection_names"):
+        return False
+
+    names = []
+
+    def _walk(lc):
+        if lc.collection.name not in {"Scene Collection", "シーンコレクション"}:
+            if not lc.exclude:
+                names.append(lc.collection.name)
+        for child in lc.children:
+            _walk(child)
+
+    _walk(view_layer.layer_collection)
+    view_layer.vlm_content_collection_names.clear()
+    for name in names:
+        item = view_layer.vlm_content_collection_names.add()
+        item.name = name
+    return True
+
+
 class VLM_OT_toggle_collection_in_viewlayer(bpy.types.Operator):
     bl_idname = "vlm.toggle_collection_in_viewlayer"
     bl_label  = "コレクション追加 / 除外"
@@ -80,6 +103,7 @@ class VLM_OT_toggle_collection_in_viewlayer(bpy.types.Operator):
                 return True
             return any(_traverse(c) for c in lc.children)
         _traverse(vl.layer_collection)
+        _sync_content_collection_names(vl)
         return {'FINISHED'}
 
 class VLM_OT_add_empty_viewlayer(bpy.types.Operator):
@@ -234,6 +258,7 @@ class VLM_OT_toggle_layercollection_flag(bpy.types.Operator):
         f = self.flag
         if f == "exclude":
             lc.exclude = not lc.exclude
+            _sync_content_collection_names(vl)
         elif f == "hide_select":
             coll.hide_select = not coll.hide_select
         elif f == "hide_render":

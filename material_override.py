@@ -498,6 +498,29 @@ class VLM_OT_clear_backup_materials(bpy.types.Operator):
         self.report({'INFO'}, f"クリアされたオブジェクト数: {removed}")
         return {'FINISHED'}
 
+
+class VLM_OT_set_fake_user_all_materials(bpy.types.Operator):
+    bl_idname = "vlm.set_fake_user_all_materials"
+    bl_label = "全マテリアルにFake User"
+    bl_description = "全てのマテリアルにFake Userを付与します"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        try:
+            return bool(bpy.data.materials)
+        except Exception:
+            return False
+
+    def execute(self, context):
+        updated = 0
+        for mat in bpy.data.materials:
+            if not mat.use_fake_user:
+                mat.use_fake_user = True
+                updated += 1
+        self.report({'INFO'}, f"Fake User を付与: {updated} 個")
+        return {'FINISHED'}
+
 # --------------------------------------------------
 # レンダリング直前ハンドラ
 # --------------------------------------------------
@@ -535,6 +558,7 @@ classes = (
     VLM_OT_backup_materials_base,
     VLM_OT_force_backup_materials,
     VLM_OT_restore_materials,
+    VLM_OT_set_fake_user_all_materials,
 )
 
 def register():

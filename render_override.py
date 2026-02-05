@@ -4,6 +4,7 @@
 # ------------------------------------------------------------
 
 import bpy
+import math
 from bpy.props import (
     EnumProperty,
     IntProperty,
@@ -305,6 +306,18 @@ class VLM_RenderSettings(PropertyGroup):
     resolution_x: IntProperty(name="解像度 X", default=1920, min=1,  max=16384, update=_update_render_settings)
     resolution_y: IntProperty(name="解像度 Y", default=1080, min=1,  max=16384, update=_update_render_settings)
     resolution_percentage: IntProperty(name="Scale (%)", default=100, min=1, max=1000, update=_update_render_settings)
+    overscan_enable: BoolProperty(
+        name="Overscan",
+        default=False,
+        update=_update_render_settings
+    )
+    overscan_scale: IntProperty(
+        name="Overscan Scale (%)",
+        default=110,
+        min=100,
+        max=1000,
+        update=_update_render_settings,
+    )
     aspect_x: FloatProperty(name="アスペクト X", default=1.0, min=0.1, update=_update_render_settings)
     aspect_y: FloatProperty(name="アスペクト Y", default=1.0, min=0.1, update=_update_render_settings)
     frame_rate: FloatProperty(name="FPS", default=24.0, min=0.01, max=60000, precision=3, update=_update_render_settings)
@@ -357,6 +370,7 @@ def sync_scene_settings_to_addon(scene):
         rs.resolution_x = r.resolution_x
         rs.resolution_y = r.resolution_y
         rs.resolution_percentage = r.resolution_percentage
+        rs.overscan_scale = 100
         rs.aspect_x = r.pixel_aspect_x
         rs.aspect_y = r.pixel_aspect_y
         # `fps` と `fps_base` から実際のフレームレートを計算して反映
@@ -518,8 +532,34 @@ def apply_render_override(scene: bpy.types.Scene,
         r.resolution_x          = min(int(round(fmt.resolution_x * factor)), max_dim)
         r.resolution_y          = min(int(round(fmt.resolution_y * factor)), max_dim)
         r.resolution_percentage = 100
+    base_res_x = max(1, int(r.resolution_x))
+    base_res_y = max(1, int(r.resolution_y))
     r.pixel_aspect_x = fmt.aspect_x
     r.pixel_aspect_y = fmt.aspect_y
+
+    # 5.1) オーバースキャン（解像度 + カメラ画角）
+    cam_obj = scene.camera
+    cam_data = cam_obj.data if cam_obj and hasattr(cam_obj, "data") else None
+    if getattr(fmt, "overscan_enable", False):
+        overscan_scale = max(100, min(int(getattr(fmt, "overscan_scale", 100)), 1000))
+        scale_factor = overscan_scale / 100.0
+        over_x = min(max(1, int(round(base_res_x * scale_factor))), max_dim)
+        over_y = min(max(1, int(round(base_res_y * scale_factor))), max_dim)
+        r.resolution_x = over_x
+        r.resolution_y = over_y
+        r.resolution_percentage = 100
+
+        if cam_data:
+            base_angle = cam_data.get("vlm_overscan_base_angle", None)
+            if base_angle is None:
+                base_angle = cam_data.angle
+                cam_data["vlm_overscan_base_angle"] = float(base_angle)
+
+            new_angle = 2.0 * math.atan(math.tan(base_angle / 2.0) * scale_factor)
+            cam_data.angle = new_angle
+    else:
+        if cam_data and "vlm_overscan_base_angle" in cam_data:
+            cam_data.angle = float(cam_data["vlm_overscan_base_angle"])
 
     # 6) フレームレート（従来どおり）
     fr = round(fmt.frame_rate, 3)
