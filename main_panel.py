@@ -1062,11 +1062,11 @@ class VLM_PT_panel(bpy.types.Panel):
                 op = row.operator("vlm.set_active_viewlayer", text="", icon='RADIOBUT_OFF', emboss=False)
                 op.layer_name = v.name
 
-        dup_row = layout.row(align=True)
-        dup_row.operator("vlm.duplicate_viewlayers_popup", icon='DUPLICATE')
-        dup_row.operator("vlm.create_viewlayers_from_collections_popup", icon='OUTLINER_COLLECTION')
-        dup_row.operator("vlm.apply_collection_settings_popup", icon='MODIFIER_ON')
-        dup_row.operator("vlm.apply_render_settings_popup", icon='RENDER_STILL')
+        dup_col = layout.column(align=True)
+        dup_col.operator("vlm.duplicate_viewlayers_popup", icon='DUPLICATE')
+        dup_col.operator("vlm.create_viewlayers_from_collections_popup", icon='OUTLINER_COLLECTION')
+        dup_col.operator("vlm.apply_collection_settings_popup", icon='MODIFIER_ON')
+        dup_col.operator("vlm.apply_render_settings_popup", icon='RENDER_STILL')
 
         layout.separator()
 
